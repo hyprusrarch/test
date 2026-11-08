@@ -252,6 +252,14 @@ assert.ok(scene.hotspots.filter(p => p.libraryNote).every(p => p.discoverRange =
 assert.equal(scene.hotspots.filter(p => p.id.startsWith('library-answer-panel-')).length, 5);
 assert.ok(scene.hotspots.some(p => p.id === 'lock'), 'final archive exit lock should be present');
 assert.equal(scene.hotspots.filter(p => p.libraryNote).length, scene.libraryLayout.papers.filter(p => !p.drawerId).length);
+assert.equal(scene.drawers.filter(drawer => drawer.roomIndex === 3).length, 0, 'the Library must not contain any drawers');
+assert.ok(scene.libraryLayout.papers.every(note => !note.drawerId && !note.flatInDrawer), 'all ten Library word slips must remain loose on the bookshelves');
+assert.ok(!scene.hotspots.some(point => point.id.startsWith('drawer-library-') || point.libraryDrawer), 'the Library must not expose drawer interaction targets');
+assert.ok(!scene.roomGeometry.some(face => face.roomIndex === 3 && face.drawerId), 'the Library must not contain drawer geometry');
+assert.ok(scene.libraryLayout.papers.every(note => scene.hotspots.some(point => point.id === `library-paper-${note.id}`)), 'all Library shelf papers must be immediately collectible without opening drawers');
+const cabinetCenterX = scene.roomOffsets[2] + 4.70 * 1.25;
+const cabinetCenterZ = 2.2 - 12.55 * 1.25;
+assert.ok(!scene.colliders.some(box => Math.abs((box.minX + box.maxX) / 2 - cabinetCenterX) < .02 && Math.abs((box.minZ + box.maxZ) / 2 - cabinetCenterZ) < .02 && Math.abs((box.maxX - box.minX) - 2.75) < .02), 'the removed Library drawer cabinet must not leave an invisible collision box');
 
 // Restore the original camera framing and retain 1.5x movement speed (2.7 to 4.05).
 scene.width = 1280; scene.height = 720;
@@ -406,4 +414,4 @@ assert.equal(scene.jump(), true, 'jump action should start from the floor');
 assert.equal(scene.jumpVelocity, 7.2, 'jump input should set the upward impulse');
 scene.jumpVelocity = 0; scene.jumpHeight = 0;
 scene.dispose();
-console.log('PASS: 2 ESL stages × 3 difficulty tiers; four-room progression; 1.5x room footprints; Ticket Hall and Storeroom furniture/drawers; surface-aligned papers/hotspots; inactive-room vertex culling; Library connector; mobile pointerdown jump/touch capture; 20 answer panels; original FOV and movement; stable Gallery artwork; byte-identical gallery PNG; ambient overlay with clock/fan/glint effects; eased drawer motion; reduced-motion styling; strict main/ambient/Gallery pixel budgets at 1440p; local HTML/JavaScript resources.');
+console.log('PASS: 2 ESL stages × 3 difficulty tiers; four-room progression; 1.5x room footprints; Ticket Hall and Storeroom furniture/drawers; drawer-free Library shelves and loose papers; surface-aligned papers/hotspots; inactive-room vertex culling; Library connector; mobile pointerdown jump/touch capture; 20 answer panels; original FOV and movement; stable Gallery artwork; byte-identical gallery PNG; ambient overlay with clock/fan/glint effects; eased drawer motion; reduced-motion styling; strict main/ambient/Gallery pixel budgets at 1440p; local HTML/JavaScript resources.');

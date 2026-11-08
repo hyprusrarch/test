@@ -1156,7 +1156,6 @@ class CanvasMuseumScene {
     this._addCollider(-4.25,-28,5.5,.28,4.5);
     this._addCollider(4.25,-28,5.5,.28,4.5);
     if (!this.exitOpen) this._addCollider(0,-28,3.2,.30,3.15);
-    this._addCollider(4.70,-12.55,2.20,.94,.88);
     for (const rack of (this.libraryLayout?.racks || [])) this._addCollider(rack.x,rack.z,2.32,.86,3.7);
 
     this.roomScaleX = MAIN_ROOM_SCALE; this.roomScaleZ = MAIN_ROOM_SCALE; this._worldOffsetX = 0; this._worldOffsetZ = 0;
@@ -1298,12 +1297,6 @@ class CanvasMuseumScene {
       this._poly([[x1,y0,z0],[x1,y0,z1],[x1,y1,z1],[x1,y1,z0]], side);
       this._poly([[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top);
     }
-    // A small archive cabinet with three sliding drawers sits beside the
-    // entrance. Six archive slips are stored flat in these drawers.
-    this._activeLayer = 1;
-    this._box(4.70, 0, -12.55, 2.20, .88, .94, '#59432f', '#987047');
-    for (const drawer of this.drawers.filter(item => item.roomIndex === 3)) this._buildDrawerGeometry(drawer);
-
     // The final exit keypad sits at the far-left end of the rear wall, separate
     // from the five answer panels. It disappears with the final exit door.
     if (!this.exitOpen) {
@@ -1327,21 +1320,13 @@ class CanvasMuseumScene {
     this.libraryPaperLayout = [];
     this._activeLayer = 2;
     for (const note of this.libraryLayout.papers) {
-      let corners;
-      if (note.flatInDrawer) {
-        const d = note.height * .5;
-        corners = [[note.x-note.width/2,note.y,note.z-d],[note.x+note.width/2,note.y,note.z-d],
-          [note.x+note.width/2,note.y,note.z+d],[note.x-note.width/2,note.y,note.z+d]];
-      } else {
-        const cos = Math.cos(note.angle || 0), sin = Math.sin(note.angle || 0);
-        corners = [[-1,-1],[1,-1],[1,1],[-1,1]].map(([sx,sy]) => {
-          const dx = sx * note.width * .5, dy = sy * note.height * .5;
-          return [note.x + dx * cos - dy * sin, note.y + dx * sin + dy * cos, note.z];
-        });
-      }
+      const cos = Math.cos(note.angle || 0), sin = Math.sin(note.angle || 0);
+      const corners = [[-1,-1],[1,-1],[1,1],[-1,1]].map(([sx,sy]) => {
+        const dx = sx * note.width * .5, dy = sy * note.height * .5;
+        return [note.x + dx * cos - dy * sin, note.y + dx * sin + dy * cos, note.z];
+      });
       const face = this._poly(corners, note.tint || '#c9bea4', '#65563e', null, {
-        libraryNoteIndex: note.id,
-        ...(note.drawerId ? { drawerId: note.drawerId, drawerPaper: true, drawerMove: true, noVertexDedup: true } : {})
+        libraryNoteIndex: note.id
       });
       this.libraryPaperLayout.push({ ...note, faceId: face.faceId });
     }
@@ -1459,30 +1444,6 @@ class CanvasMuseumScene {
       }
     }
 
-    // A low archive cabinet sits beside the Library entrance, with three
-    // independently operable drawers containing six of the ten archive slips.
-    const libFrontZ = -12.08;
-    const librarySpecs = [3.95, 4.70, 5.45].map((x, index) => ({
-      id: `drawer-library-${index}`, roomIndex: 3, areaId: 'library', x,
-      y: .20, z: libFrontZ - .40, width: .62, height: .25, depth: .40,
-      open: false, offset: 0, targetOffset: 0, animating: false, faces: [], paperIds: [index * 2, index * 2 + 1]
-    }));
-    for (const drawer of librarySpecs) {
-      this.drawers.push(drawer);
-      this.drawerById.set(drawer.id, drawer);
-      for (let slot = 0; slot < drawer.paperIds.length; slot++) {
-        const note = this.libraryLayout?.papers?.[drawer.paperIds[slot]];
-        if (!note) continue;
-        note.drawerId = drawer.id;
-        note.x = drawer.x + (slot === 0 ? -.14 : .14);
-        note.y = drawer.y + .035;
-        note.z = drawer.z + drawer.depth * .53;
-        note.width = .24;
-        note.height = .26;
-        note.angle = 0;
-        note.flatInDrawer = true;
-      }
-    }
   }
 
   _buildDrawerGeometry(drawer) {
@@ -1578,14 +1539,9 @@ class CanvasMuseumScene {
         const x = [-5.4,-2.7,0,2.7,5.4][index];
         add(`library-answer-panel-${index}`, `Use library answer panel ${index + 1}`, x, 1.42, -27.2, { libraryAnswerPanel: true, panelIndex: index, discoverRange: 10 });
       }
-      for (const drawer of this.drawers.filter(item => item.roomIndex === 3)) {
-        add(drawer.id, `${drawer.open ? 'Close' : 'Open'} archive drawer`, drawer.x, drawer.y + drawer.height * .55, drawer.z + drawer.depth + (drawer.targetOffset ?? drawer.offset) + .10, { drawer: true, libraryDrawer: true, drawerOpen: drawer.open, discoverRange: 4.8 });
-      }
       for (const note of (this.libraryLayout?.papers || [])) {
         if (this.collectedLibraryPapers.has(note.id)) continue;
-        const containingDrawer = note.drawerId ? this.drawerById.get(note.drawerId) : null;
-        if (containingDrawer && !containingDrawer.open) continue;
-        add(`library-paper-${note.id}`, `Collect archive word ${note.id + 1}`, note.x, note.y + .06, note.z + .02 + (containingDrawer?.targetOffset ?? containingDrawer?.offset ?? 0), { discoverRange: 5.4, libraryNote: true });
+        add(`library-paper-${note.id}`, `Collect archive word ${note.id + 1}`, note.x, note.y + .06, note.z + .02, { discoverRange: 5.4, libraryNote: true });
       }
     } else {
       const roomData = game.rooms[this.roomIndex];
@@ -2856,7 +2812,7 @@ class CanvasMuseumScene {
       const roomPaperMatch = /^paper-(\d)$/.exec(point.id || '');
       if (roomPaperMatch && this.collectedRoomPapers.has(`${point.roomIndex ?? this.roomIndex}:${Number(roomPaperMatch[1])}`)) continue;
       const pointLibrary = !!point.libraryNote;
-      const sameArea = (pointLibrary || point.libraryDrawer || point.roomIndex === 3)
+      const sameArea = (pointLibrary || point.roomIndex === 3)
         ? libraryArea
         : (!libraryArea && this._physicalRoomForX(point.x) === visibleRoom);
       const worldDistance = Math.hypot(point.x-this.camera.x, point.y-this.camera.y, point.z-this.camera.z);

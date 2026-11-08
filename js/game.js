@@ -261,11 +261,11 @@ function makeGame(stage = 9, tier = 0, seed = Date.now()) {
   ];
   const libraryRoom = {
     name: 'The library archive',
-    scene: 'The final archive is locked. Search the shelves and drawers for five terms, then use them at the archive answer panels to reveal the exit code.',
+    scene: 'The final archive is locked. Search the bookshelves for five terms, then use them at the archive answer panels to reveal the exit code.',
     kind: 'library', lock: 'letters', keyObject: null,
     puzzles: librarySpecs.map((item, index) => ({
       kind:'library', prompt:'ARCHIVE KNOWLEDGE', text:item.text, answer:item.answer,
-      opts:[item.answer], object:item.object, gives:item.gives, hint:'Search the shelves and archive drawers for this term.'
+      opts:[item.answer], object:item.object, gives:item.gives, hint:'Search the bookshelves for this term.'
     })),
     wordPapers: [], code: librarySpecs.map(item => item.gives),
     key: null, event: { type:'none', at: 0 }
