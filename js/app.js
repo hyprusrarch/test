@@ -27,7 +27,7 @@ const state = {
   dark: false, lastGuardNotice: false, eventNotice: null,
   keysDown: new Set(), lastHud: 0, lastTick: 0,
   joystickPointer: null, joystickOrigin: null, pauseAt: null, pausedModal: null, cheatMatcher: null,
-  libraryNotesFound: new Set(), libraryInventory: [], equippedLibraryPaper: null
+  paperInventory: [], equippedPaperId: null, paperArea: null, librarySolved: [false, false, false, false, false], rejectedPanelWords: new Set()
 };
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -94,6 +94,7 @@ function startGame() {
   state.tier = Number(tierSelect.value);
   state.game = makeGame(state.stage, state.tier, Date.now());
   state.play = newPlay(state.game);
+  state.librarySolved = state.play.solved[3];
   state.mode = 'game';
   state.paused = false;
   state.pauseAt = null;
@@ -101,9 +102,10 @@ function startGame() {
   state.dark = false;
   state.lastGuardNotice = false;
   state.eventNotice = null;
-  state.libraryNotesFound = new Set();
-  state.libraryInventory = [];
-  state.equippedLibraryPaper = null;
+  state.paperInventory = [];
+  state.equippedPaperId = null;
+  state.paperArea = null;
+  state.rejectedPanelWords = new Set();
   state.modal = null;
   state.focusedId = null;
   scene.setPointerLockEnabled(true);
@@ -112,13 +114,15 @@ function startGame() {
   gameUI.hidden = false;
   hud.hidden = false;
   modalRoot.hidden = true;
+  modalRoot.classList.remove('live-question');
   modalRoot.innerHTML = '';
   scene.setRoom(state.game, 0);
-  renderLibraryHotbar();
+  state.paperArea = scene.getCurrentAreaId?.() ?? '0';
+  renderPaperHotbar();
   updateProgress();
   updateHud(true);
   updateObjective();
-  showToast('Find the three clues. The guard returns in 12 minutes.');
+  showToast('Find loose word papers, then use the answer panels to recover each lock character.');
   scheduleGameTick();
 }
 
@@ -131,10 +135,10 @@ function showMenu() {
   state.modal = null;
   state.game = null;
   state.play = null;
-  state.libraryInventory = [];
-  state.equippedLibraryPaper = null;
-  state.libraryNotesFound = new Set();
-  scene?.setEquippedLibraryPaper(null);
+  state.paperInventory = [];
+  state.equippedPaperId = null;
+  state.paperArea = null;
+  scene?.setEquippedPaper(null);
   state.dark = false;
   scene.setMovement(0, 0);
   scene.setPointerLockEnabled(false);
@@ -146,6 +150,7 @@ function showMenu() {
   gameUI.hidden = true;
   hud.hidden = true;
   modalRoot.hidden = true;
+  modalRoot.classList.remove('live-question');
   modalRoot.innerHTML = '';
   updateMenuCopy();
 }
@@ -163,7 +168,7 @@ function updateObjective() {
   if (!state.play) return;
   const room = currentRoom();
   $('#objective-text').textContent = room.name;
-  $('#objective-sub').textContent = room.scene;
+  $('#objective-sub').textContent = `${room.scene} Find the loose word slips, then use all ${room.puzzles.length} answer panels to recover the lock code.`;
   $('#hud-room').textContent = scene?.isInLibrary?.() ? 'LIBRARY' : room.name.toUpperCase();
   $('#torch-button').hidden = room.event.type !== 'powercut';
   $('#desktop-torch-button').hidden = room.event.type !== 'powercut';
@@ -181,7 +186,7 @@ function updateHud(force = false) {
   $('#guard-wrap').classList.toggle('caught', state.play.caught);
   const solved = state.play.solved[state.play.room];
   const found = solved.filter(Boolean).length;
-  $('#solved-label').textContent = `CLUES FOUND · ${found} / 3`;
+  $('#solved-label').textContent = `CODE CHARACTERS · ${found} / ${solved.length}`;
   const stack = $('#solved-paper-stack');
   if (stack) {
     const rows = solved.map((isSolved, index) => isSolved
@@ -198,18 +203,28 @@ function updateHud(force = false) {
   $('#torch-button').classList.toggle('on', now < state.play.torchUntil);
 }
 
+function isLiveQuestion(type = state.modal?.type) {
+  return type === 'answer-panel' || type === 'library-answer-panel';
+}
 function openModal(html, type) {
   state.modal = { type };
-  scene?.releasePointerLock();
-  scene?.setRendering(false);
+  const liveQuestion = isLiveQuestion(type);
+  modalRoot.classList.toggle('live-question', liveQuestion);
+  // Question cards are non-blocking: the player can keep moving while they
+  // read and answer. Pointer lock is released so the answer buttons remain
+  // clickable; drag-to-look and keyboard/touch movement remain available.
+  scene?.setPointerLockEnabled(false);
+  scene?.setRendering(liveQuestion);
   modalRoot.innerHTML = html;
   modalRoot.hidden = false;
 }
 function closeModal(recaptureMouse = false) {
   state.modal = null;
+  modalRoot.classList.remove('live-question');
   modalRoot.hidden = true;
   modalRoot.innerHTML = '';
   scene?.setRendering(true);
+  if (state.mode === 'game' && !state.paused) scene?.setPointerLockEnabled(true);
   // Called only from a real user gesture when recaptureMouse is true.
   // Pointer Lock requires transient activation; it cannot be restored from a timer.
   if (recaptureMouse && state.mode === 'game' && !state.paused) {
@@ -224,58 +239,67 @@ function roomDocument(para = null) {
   ).join('')}</div>`;
 }
 
-function showPuzzle(index) {
-  const room = currentRoom();
+function showAnswerPanel(index) {
+  const roomIndex = state.play.room;
+  const room = state.game.rooms[roomIndex];
   const puzzle = room.puzzles[index];
-  if (state.play.solved[state.play.room][index]) {
-    openModal(`<article class="modal-card narrow"><p class="modal-kicker">CLUE ${index + 1} · SOLVED</p><h2>${escapeHtml(puzzle.object)}</h2><p class="modal-desc">You have already found this part of the code: <strong>${escapeHtml(puzzle.gives)}</strong>.</p><div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close</button></div></article>`, 'solved');
+  if (!puzzle) return;
+  if (state.play.solved[roomIndex][index]) {
+    openModal(`<article class="modal-card narrow"><p class="modal-kicker">ANSWER PANEL ${index + 1} · COMPLETE</p><h2>${escapeHtml(puzzle.object)}</h2><p class="modal-desc">You recovered code character <strong>${escapeHtml(puzzle.gives)}</strong>.</p><div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close</button></div></article>`, 'solved');
     return;
   }
-  const prompt = puzzle.prompt || 'Choose the correct answer.';
-  const options = puzzle.opts.map((option, optionIndex) =>
-    `<button class="answer-option" type="button" data-answer-index="${optionIndex}">${escapeHtml(option)}</button>`
-  ).join('');
+  const area = currentPaperArea();
+  const words = state.paperInventory.filter(item => item.areaId === area);
+  const choices = words.map((item, wordIndex) => {
+    const rejected = state.rejectedPanelWords.has(`${roomIndex}:${index}:${item.id}`);
+    return `<button class="answer-option word-choice" type="button" data-word-choice="${wordIndex}" ${rejected ? 'disabled' : ''}><strong>${escapeHtml(item.display || item.value)}</strong><small>${rejected ? 'DOES NOT FIT THIS PANEL' : 'USE FOUND WORD'}</small></button>`;
+  }).join('');
   const doc = puzzle.kind === 'reading' ? roomDocument(puzzle.para) : '';
-  openModal(`<article class="modal-card" data-puzzle-index="${index}">
-    <p class="modal-kicker">${escapeHtml(room.name)} · CLUE ${index + 1} OF 3</p>
+  const empty = '<div class="question-box">No word papers collected yet. Search the room, pick up the loose word slips, then return to this panel.</div>';
+  openModal(`<article class="modal-card live-question-card" data-panel-index="${index}">
+    <p class="modal-kicker">${escapeHtml(room.name)} · ANSWER PANEL ${index + 1} OF ${room.puzzles.length}</p>
     <h2>${escapeHtml(puzzle.object)}</h2>
     ${doc}
-    <p class="modal-desc">${escapeHtml(prompt)}</p>
-    <div class="question-box">${escapeHtml(puzzle.text)}</div>
-    <div class="answer-list">${options}</div>
+    <p class="modal-desc">This panel needs one of the words on your collected paper slips. Select a word from your word bank; the panel checks it and reveals a lock character when it fits.</p>
+    <div class="question-box"><small>CLUE</small><br>${escapeHtml(puzzle.text)}</div>
+    <p class="modal-kicker">YOUR FOUND WORDS · ${words.length}</p>
+    <div class="answer-list word-choice-list">${choices || empty}</div>
     <div id="answer-feedback"></div>
-    <div class="modal-actions">
-      <button class="text-button" data-action="hint">Use a hint (+30 sec)</button>
-      <button class="secondary-button" data-action="close">Close</button>
-    </div>
-  </article>`, 'puzzle');
+    <div class="modal-actions"><span></span><button class="secondary-button" data-action="close">Close panel</button></div>
+  </article>`, 'answer-panel');
   state.modal.index = index;
+  state.modal.roomIndex = roomIndex;
   state.modal.feedback = false;
 }
 
-function answerCurrentPuzzle(optionIndex) {
-  if (state.modal?.type !== 'puzzle' || state.modal.feedback) return;
+function answerPanelWithWord(wordIndex) {
+  if (state.modal?.type !== 'answer-panel' || state.modal.feedback) return;
+  const roomIndex = state.modal.roomIndex ?? state.play.room;
+  const words = state.paperInventory.filter(item => item.areaId === currentPaperArea());
+  const token = words[wordIndex];
+  if (!token) return;
   const index = state.modal.index;
-  const puzzle = currentRoom().puzzles[index];
-  const option = puzzle.opts[optionIndex];
-  const buttons = modalRoot.querySelectorAll('[data-answer-index]');
-  buttons.forEach(button => button.disabled = true);
-  const result = answerPuzzle(state.game, state.play, index, option);
+  const puzzle = state.game.rooms[roomIndex].puzzles[index];
+  const result = answerPuzzle(state.game, state.play, index, token.value);
   updateHud(true);
-  const selected = modalRoot.querySelector(`[data-answer-index="${optionIndex}"]`);
+  const button = modalRoot.querySelector(`[data-word-choice="${wordIndex}"]`);
   const feedback = $('#answer-feedback');
   if (result === 'right') {
-    selected?.classList.add('correct');
     state.modal.feedback = true;
-    feedback.innerHTML = '<div class="answer-feedback">Correct. One segment of the room code has been found.</div>';
-    modalRoot.querySelector('.modal-actions').innerHTML = '<span></span><button class="gold-button" data-action="continue">Continue</button>';
+    button?.classList.add('correct');
+    modalRoot.querySelectorAll('[data-word-choice]').forEach(item => { item.disabled = true; });
+    feedback.innerHTML = `<div class="answer-feedback">Correct. The panel reveals code character <strong>${escapeHtml(puzzle.gives)}</strong>. Keep the word in your found-word list; it may help with another panel.</div>`;
+    modalRoot.querySelector('.modal-actions').innerHTML = '<span></span><button class="gold-button" data-action="close">Continue</button>';
+    showToast(`Code character recovered: ${puzzle.gives}`, 'good');
   } else {
-    selected?.classList.add('wrong');
-    feedback.innerHTML = `<div class="answer-feedback bad">Not quite. ${RULES.penalties.wrong} seconds have been added. Try another answer.</div>`;
-    buttons.forEach(button => { if (!button.classList.contains('wrong')) button.disabled = false; });
-    showToast(`Incorrect answer · +${RULES.penalties.wrong} seconds`, 'bad');
+    state.rejectedPanelWords.add(`${roomIndex}:${index}:${token.id}`);
+    button?.classList.add('wrong');
+    if (button) { button.disabled = true; const label = button.querySelector('small'); if (label) label.textContent = 'DOES NOT FIT THIS PANEL'; }
+    feedback.innerHTML = `<div class="answer-feedback bad">That word does not fit this panel. ${RULES.penalties.wrong} seconds added. Try another word you collected.</div>`;
+    showToast(`Incorrect word · +${RULES.penalties.wrong} seconds`, 'bad');
   }
 }
+
 
 function showGoldenKey() {
   const key = currentRoom().key;
@@ -312,7 +336,7 @@ function answerGoldenKey(optionIndex) {
 
 function showLock() {
   const chars = codeAlphabet();
-  const current = state.play.dial || [0, 0, 0];
+  const current = state.play.dial || Array.from({ length: currentRoom().code.length }, () => 0);
   const found = state.play.solved[state.play.room].map((value, index) => value ? currentRoom().code[index] : null);
   const dials = current.map((value, index) => `
     <div class="dial">
@@ -323,8 +347,8 @@ function showLock() {
     </div>`).join('');
   openModal(`<article class="modal-card narrow">
     <p class="modal-kicker">${escapeHtml(currentRoom().name)} · SECURITY LOCK</p>
-    <h2>${state.play.room === 2 ? 'The exit keypad.' : 'The room lock.'}</h2>
-    <p class="modal-desc">Enter the three-character code in the order of the objects. Solved clues are recorded in your notebook. Guessing is allowed, but a wrong code costs 30 seconds.</p>
+    <h2>${state.play.room === 2 ? 'The Storeroom exit lock.' : state.play.room === 3 ? 'The archive exit lock.' : 'The room lock.'}</h2>
+    <p class="modal-desc">Enter all ${currentRoom().code.length} recovered characters in panel order. Your notebook records each character as you solve its answer panel. A wrong code costs 30 seconds.</p>
     <div class="dial-row">${dials}</div>
     <div class="code-progress">${found.map(value => `<span class="${value ? 'found' : ''}"></span>`).join('')}</div>
     <div id="lock-feedback"></div>
@@ -370,10 +394,10 @@ function showNotebook() {
   const rooms = state.game.rooms.map((room, index) => {
     const solved = state.play.solved[index];
     const segments = room.code.map((code, i) => solved[i] ? code : '—').join(' · ');
-    const key = state.play.keys[index] === true ? 'Collected' : state.play.keys[index] === false ? 'Missed' : 'Not found';
+    const key = !room.key ? 'Not applicable' : state.play.keys[index] === true ? 'Collected' : state.play.keys[index] === false ? 'Missed' : 'Not found';
     return `<div class="notebook-entry"><p class="modal-kicker">ROOM ${index + 1} · ${escapeHtml(room.name)}</p><div class="question-box">${escapeHtml(segments)}</div><p class="modal-desc">Golden key: ${key}</p></div>`;
   }).join('');
-  openModal(`<article class="modal-card narrow"><p class="modal-kicker">FIELD NOTES</p><h2>Your notebook.</h2><p class="modal-desc">Code segments appear here as you solve the objects. Each lock uses the three answers in the order shown.</p>${rooms}<div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close notebook</button></div></article>`, 'notebook');
+  openModal(`<article class="modal-card narrow"><p class="modal-kicker">FIELD NOTES</p><h2>Your notebook.</h2><p class="modal-desc">Each answer panel reveals one character. Use the found-word slips in each room to solve the panels, then enter the characters in order.</p>${rooms}<div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close notebook</button></div></article>`, 'notebook');
 }
 
 function showEvent() {
@@ -428,8 +452,8 @@ function renderFinalLock() {
   const tiles = final.tiles.map((letter, index) => `<button class="final-tile" data-tile-index="${index}" ${pick.includes(index) ? 'disabled' : ''}>${escapeHtml(letter)}</button>`).join('');
   openModal(`<article class="modal-card narrow">
     <p class="modal-kicker">FINAL EXIT · 60 SECOND WORD LOCK</p>
-    <h2>The street door.</h2>
-    <p class="modal-desc">Put the letters of a word you found in the ticket hall in the correct order. The lock will release when the word is complete.</p>
+    <h2>The archive's final door.</h2>
+    <p class="modal-desc">Put the letters of a word you found in the ticket hall in the correct order. The final archive lock will release when the word is complete.</p>
     ${final.clue ? `<div class="question-box">Clue: ${escapeHtml(final.clue)}</div>` : ''}
     <div class="final-time ${left <= 10 ? 'near' : ''}" id="final-timer">${formatTime(left)}</div>
     <div class="final-slots">${slots}</div>
@@ -484,7 +508,7 @@ function showResult(result) {
     <p class="modal-desc">${escapeHtml(story)} ${result.finalOk ? 'The exit word was entered before the lock timed out.' : 'The exit lock jammed, but released after the delay.'}</p>
     <div class="result-grid">
       <div class="result-stat"><strong>${formatTime(result.seconds)}</strong><span>ESCAPE TIME</span></div>
-      <div class="result-stat"><strong>${result.rightFirst}/9</strong><span>FIRST-TRY CLUES</span></div>
+      <div class="result-stat"><strong>${result.rightFirst}/${state.game.rooms.reduce((total, room) => total + room.puzzles.length, 0)}</strong><span>FIRST-TRY CLUES</span></div>
       <div class="result-stat"><strong>${result.keys}/3</strong><span>GOLDEN KEYS</span></div>
     </div>
     <p class="modal-desc">Score: ${result.points.toLocaleString()} points · ${state.game.tierName} difficulty</p>
@@ -494,9 +518,8 @@ function showResult(result) {
 
 function showGalleryPhoto(index) {
   const names = ['Gallery photograph I','Gallery photograph II','Gallery photograph III','Gallery photograph IV'];
-  const art = window.GALLERY_ART_DATA;
-  if (!art) return showToast('The gallery image is unavailable.', 'bad');
-  openModal(`<article class="modal-card narrow gallery-viewer"><p class="modal-kicker">MUSEUM GALLERY · PHOTO ${index + 1}</p><h2>${names[index] || 'Gallery photograph'}</h2><img src="${art}" alt="Dog photograph displayed in the museum gallery" style="display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:12px;background:#fff;margin:14px auto"><div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close</button></div></article>`, 'gallery');
+  const art = window.GALLERY_ART_DATA || 'assets/gallery-photo.png';
+  openModal(`<article class="modal-card narrow gallery-viewer"><p class="modal-kicker">MUSEUM GALLERY · PHOTO ${index + 1}</p><h2>${names[index] || 'Gallery photograph'}</h2><img src="${art}" alt="Original dog photograph displayed in the museum gallery" style="display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:12px;background:#fff;margin:14px auto" onerror="this.onerror=null;this.src='assets/gallery-photo.png'"><div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close</button></div></article>`, 'gallery');
 }
 
 const LIBRARY_NOTES = [
@@ -512,64 +535,170 @@ const LIBRARY_NOTES = [
   ['Collection note', 'A complete catalogue records where each item came from and how it is preserved.']
 ];
 
-function renderLibraryHotbar() {
+function currentPaperArea() {
+  return scene?.getCurrentAreaId?.() ?? (scene?.isInLibrary?.() ? 'library' : String(scene?.roomIndex ?? 0));
+}
+
+function renderPaperHotbar() {
   const hotbar = $('#paper-hotbar');
   const slots = $('#paper-hotbar-slots');
   if (!hotbar || !slots) return;
-  const visible = state.mode === 'game' && !!scene?.isInLibrary?.() && state.libraryInventory.length > 0;
+  const area = currentPaperArea();
+  const inventory = state.paperInventory.filter(item => item.areaId === area);
+  const visible = state.mode === 'game' && inventory.length > 0;
   hotbar.hidden = !visible;
   if (!visible) { slots.innerHTML = ''; return; }
-  slots.innerHTML = state.libraryInventory.map((paperIndex, slotIndex) => {
-    const note = LIBRARY_NOTES[paperIndex];
-    const selected = paperIndex === state.equippedLibraryPaper;
-    const preview = String(note[1] || '').replace(/\s+/g, ' ').slice(0, 34);
-    return `<button type="button" class="paper-hotbar-slot${selected ? ' selected' : ''}" data-library-paper-slot="${slotIndex}" data-paper-index="${paperIndex}" aria-pressed="${selected}" title="Equip ${escapeHtml(note[0])}"><span class="paper-slot-index">${String(slotIndex + 1).padStart(2, '0')}</span><span class="paper-slot-art">${escapeHtml(preview)}</span><strong>${escapeHtml(note[0])}</strong></button>`;
+  slots.innerHTML = inventory.map((item, slotIndex) => {
+    const selected = item.id === state.equippedPaperId;
+    const preview = String(item.display || item.value || item.title || '').replace(/\s+/g, ' ').slice(0, 32);
+    return `<button type="button" class="paper-hotbar-slot${selected ? ' selected' : ''}" data-paper-slot="${slotIndex}" data-paper-id="${escapeHtml(item.id)}" aria-pressed="${selected}" title="Equip ${escapeHtml(item.title)}"><span class="paper-slot-index">${String(slotIndex + 1).padStart(2, '0')}</span><span class="paper-slot-art">${escapeHtml(preview)}</span><strong>${escapeHtml(item.title)}</strong></button>`;
   }).join('');
 }
 
-function equipLibraryPaper(index) {
-  if (!state.libraryInventory.includes(index) || !scene?.isInLibrary?.()) return false;
-  const note = LIBRARY_NOTES[index];
-  state.equippedLibraryPaper = index;
-  scene.setEquippedLibraryPaper(note ? { title: note[0], body: note[1] } : null);
-  renderLibraryHotbar();
+function equipPaper(itemId) {
+  const item = state.paperInventory.find(paper => paper.id === itemId && paper.areaId === currentPaperArea());
+  if (!item) return false;
+  state.equippedPaperId = item.id;
+  scene?.setEquippedPaper(item);
+  renderPaperHotbar();
   return true;
 }
 
-function collectLibraryNote(index) {
+function collectWordPaper(index) {
+  const roomIndex = state.play?.room ?? 0;
+  const paper = state.game?.rooms?.[roomIndex]?.wordPapers?.[Number(index)];
+  if (!paper) return;
+  const id = `room-${roomIndex}-word-${paper.id}`;
+  if (state.paperInventory.some(item => item.id === id)) return;
+  const item = { id, areaId: String(roomIndex), value: paper.value, display: paper.display, title: paper.display, body: paper.body };
+  addPaperToHotbar(item);
+  scene?.collectWordPaper(roomIndex, paper.id);
+  showToast(`Word found: ${paper.display} · take it to an answer panel`, 'good');
+}
+
+function addPaperToHotbar(item) {
+  if (!item || !item.id) return false;
+  const existing = state.paperInventory.find(paper => paper.id === item.id);
+  if (!existing) state.paperInventory.push({ ...item });
+  equipPaper(item.id); // Newly collected papers are equipped immediately.
+  return true;
+}
+
+function clearPaperHotbar() {
+  state.paperInventory = [];
+  state.equippedPaperId = null;
+  scene?.setEquippedPaper(null);
+  renderPaperHotbar();
+}
+
+function collectLibraryWord(index) {
   const note = LIBRARY_NOTES[index];
   if (!note || !scene?.isInLibrary?.()) return;
-  if (state.libraryInventory.includes(index)) {
-    equipLibraryPaper(index);
-    showToast(`${note[0]} is already in your hotbar.`, '');
+  const id = `library-word-${index}`;
+  const existing = state.paperInventory.find(item => item.id === id);
+  if (!existing) {
+    addPaperToHotbar({ id, areaId: 'library', value: note[0], display: note[0].toUpperCase(), title: note[0], body: note[1] });
+    scene?.collectLibraryPaper(index);
+    showToast(`Word found: ${note[0]} · take it to an archive panel`, 'good');
+  } else {
+    equipPaper(id);
+    showToast(`${note[0]} is already in your word collection.`);
+  }
+}
+
+const LIBRARY_PANEL_QUESTIONS = [
+  { prompt: 'Which word describes assigning a catalogue number and recording each book?', answer: 'Cataloguing', gives: 'S' },
+  { prompt: 'Which practice protects old books and documents from damage?', answer: 'Conservation', gives: 'T' },
+  { prompt: 'Which system groups library materials by subject?', answer: 'Classification', gives: 'A' },
+  { prompt: 'What is the process of adding new books to a collection called?', answer: 'Acquisitions', gives: 'C' },
+  { prompt: 'What is repairing damaged books and historical documents called?', answer: 'Restoration', gives: 'K' }
+];
+
+function showLibraryAnswerPanel(index) {
+  const source = state.game?.rooms?.[3]?.puzzles?.[index];
+  const panel = source ? { ...LIBRARY_PANEL_QUESTIONS[index], prompt: source.text || LIBRARY_PANEL_QUESTIONS[index]?.prompt, answer: source.answer, gives: source.gives } : null;
+  if (!panel || !scene?.isInLibrary?.()) return;
+  if (state.play.solved[3]?.[index]) {
+    openModal(`<article class="modal-card narrow"><p class="modal-kicker">LIBRARY PANEL ${index + 1} · COMPLETE</p><h2>Archive character recovered</h2><div class="question-box">${escapeHtml(panel.gives)}</div><div class="modal-actions"><span></span><button class="gold-button" data-action="close">Close</button></div></article>`, 'solved');
     return;
   }
-  state.libraryNotesFound.add(index);
-  state.libraryInventory.push(index);
-  scene.collectLibraryPaper(index);
-  equipLibraryPaper(index); // Newly collected papers are equipped automatically.
-  showToast(`${note[0]} collected · added to hotbar`, 'good');
+  const words = state.paperInventory.filter(item => item.areaId === 'library');
+  const choices = words.map((item, wordIndex) => {
+    const rejected = state.rejectedPanelWords.has(`library:${index}:${item.id}`);
+    return `<button class="answer-option word-choice" type="button" data-library-word-choice="${wordIndex}" ${rejected ? 'disabled' : ''}><strong>${escapeHtml(item.display || item.value)}</strong><small>${rejected ? 'DOES NOT FIT THIS PANEL' : 'USE FOUND WORD'}</small></button>`;
+  }).join('');
+  openModal(`<article class="modal-card live-question-card">
+    <p class="modal-kicker">LIBRARY · ARCHIVE ANSWER PANEL ${index + 1}</p>
+    <h2>Complete the archive record.</h2>
+    <p class="modal-desc">Use a word from the papers you have collected in the Library. A correct match reveals an archive character.</p>
+    <div class="question-box"><small>CLUE</small><br>${escapeHtml(panel.prompt)}</div>
+    <p class="modal-kicker">YOUR FOUND WORDS · ${words.length}</p>
+    <div class="answer-list word-choice-list">${choices || '<div class="question-box">Find word slips attached to the bookcases first.</div>'}</div>
+    <div id="library-answer-feedback"></div>
+    <div class="modal-actions"><span></span><button class="secondary-button" data-action="close">Close panel</button></div>
+  </article>`, 'library-answer-panel');
+  state.modal.index = index;
+  state.modal.feedback = false;
+}
+
+function answerLibraryPanel(wordIndex) {
+  if (state.modal?.type !== 'library-answer-panel' || state.modal.feedback) return;
+  const words = state.paperInventory.filter(item => item.areaId === 'library');
+  const token = words[wordIndex];
+  if (!token) return;
+  const index = state.modal.index;
+  const source = state.game?.rooms?.[3]?.puzzles?.[index];
+  const panel = source ? { answer: source.answer, gives: source.gives } : LIBRARY_PANEL_QUESTIONS[index];
+  const button = modalRoot.querySelector(`[data-library-word-choice="${wordIndex}"]`);
+  const feedback = $('#library-answer-feedback');
+  if (String(token.value).toLowerCase() === panel.answer.toLowerCase()) {
+    state.librarySolved[index] = true;
+    state.play.solved[3][index] = true;
+    scene?.setLibraryPanelState(state.play.solved[3]);
+    updateHud(true);
+    state.modal.feedback = true;
+    button?.classList.add('correct');
+    modalRoot.querySelectorAll('[data-library-word-choice]').forEach(item => { item.disabled = true; });
+    feedback.innerHTML = `<div class="answer-feedback">Correct. Archive character recovered: <strong>${panel.gives}</strong>.</div>`;
+    modalRoot.querySelector('.modal-actions').innerHTML = '<span></span><button class="gold-button" data-action="close">Continue</button>';
+    showToast(`Library character recovered: ${panel.gives}`, 'good');
+  } else {
+    state.rejectedPanelWords.add(`library:${index}:${token.id}`);
+    if (button) { button.classList.add('wrong'); button.disabled = true; const label = button.querySelector('small'); if (label) label.textContent = 'DOES NOT FIT THIS PANEL'; }
+    state.play.penalty += RULES.penalties.wrong;
+    feedback.innerHTML = `<div class="answer-feedback bad">That word does not match the archive definition. ${RULES.penalties.wrong} seconds added.</div>`;
+    updateHud(true);
+  }
 }
 
 function handleAreaChange(nextArea, previousArea) {
-  if (previousArea === 'library' && nextArea !== 'library') {
-    // Archive papers are temporary Library inventory. They disappear from the
-    // hotbar and from the player's hand immediately upon leaving the Library.
-    state.libraryInventory = [];
-    state.equippedLibraryPaper = null;
-    state.libraryNotesFound.clear();
-    scene?.setEquippedLibraryPaper(null);
+  if (previousArea !== nextArea) {
+    clearPaperHotbar();
+    if (isLiveQuestion()) closeModal(false);
   }
-  renderLibraryHotbar();
+  state.paperArea = nextArea;
+  renderPaperHotbar();
   updateHud(true);
 }
 
 function handleInteract(id) {
   if (state.mode !== 'game' || state.paused || !state.play || state.modal) return;
+  if (String(id).startsWith('drawer-')) {
+    const opened = scene?.toggleDrawer(id);
+    if (opened === true) showToast('Drawer opened · search inside for a word paper.', 'good');
+    else if (opened === false) showToast('Drawer closed. Papers inside are hidden.', '');
+    return;
+  }
   if (id === 'lock') return showLock();
   if (id === 'key') return showGoldenKey();
   const libraryPaper = /^library-paper-(\d+)$/.exec(id || '');
-  if (libraryPaper) return collectLibraryNote(Number(libraryPaper[1]));
+  if (libraryPaper) return collectLibraryWord(Number(libraryPaper[1]));
+  const libraryPanel = /^library-answer-panel-(\d+)$/.exec(id || '');
+  if (libraryPanel) return showLibraryAnswerPanel(Number(libraryPanel[1]));
+  const wordPaper = /^word-paper-(\d+)$/.exec(id || '');
+  if (wordPaper) return collectWordPaper(Number(wordPaper[1]));
+  const answerPanel = /^answer-panel-(\d)$/.exec(id || '');
+  if (answerPanel) return showAnswerPanel(Number(answerPanel[1]));
   if (id === 'chair-0' || id === 'chair-1') {
     if (scene.seated) scene.standUp();
     else if (!scene.sitOnChair(id === 'chair-0' ? 0 : 1)) showToast('Move closer to the chair to sit.', '');
@@ -581,8 +710,6 @@ function handleInteract(id) {
     else if (!scene.sitOnGalleryChair(Number(galleryChair[1]))) showToast('Move closer to the chair to sit.', '');
     return;
   }
-  const paperMatch = /^(?:paper|puzzle)-(\d)$/.exec(id || '');
-  if (paperMatch) return showPuzzle(Number(paperMatch[1]));
   const photoMatch = /^photo-(\d)$/.exec(id || '');
   if (photoMatch) return showGalleryPhoto(Number(photoMatch[1]));
 }
@@ -675,10 +802,10 @@ function showTestMenu() {
 function testJumpToRoom(index) {
   if (!state.play || !state.game) return;
   const now = Date.now();
-  state.play.room = Math.max(0, Math.min(2, index));
+  state.play.room = Math.max(0, Math.min(3, index));
   state.play.roomStart[state.play.room] ??= now;
   state.play.final = null;
-  state.play.dial = [0, 0, 0];
+  state.play.dial = Array.from({ length: currentRoom().code.length }, () => 0);
   state.dark = false;
   scene.setDark(false);
   scene.setTorch(false);
@@ -696,7 +823,8 @@ function runTestAction(action) {
     updateHud(true);
     showToast('Five minutes added to the guard timer.', 'good');
   } else if (action === 'solve') {
-    state.play.solved[state.play.room] = [true, true, true];
+    state.play.solved[state.play.room] = currentRoom().puzzles.map(() => true);
+    if (state.play.room === 3) { state.librarySolved = state.play.solved[3]; scene.setLibraryPanelState(state.play.solved[3]); }
     state.play.dial = currentRoom().code.map(value => codeAlphabet().indexOf(String(value).toUpperCase()));
     updateHud(true);
     updateProgress();
@@ -712,21 +840,17 @@ function runTestAction(action) {
     showToast('Jumped to the storeroom.', 'good');
   } else if (action === 'library') {
     closeModal(true);
-    testJumpToRoom(2);
-    scene.camera.x = scene.roomOffsets[2];
-    scene.camera.y = scene.eyeHeight;
-    scene.camera.z = -20;
-    scene.yaw = 0;
-    scene.invalidate();
-    updateHud(true);
+    testJumpToRoom(3);
     showToast('Jumped to the library.', 'good');
   } else if (action === 'final') {
     closeModal();
-    state.play.room = 2;
-    state.play.roomStart[2] ??= Date.now();
-    state.play.solved = state.play.solved.map(() => [true, true, true]);
+    state.play.room = 3;
+    state.play.roomStart[3] ??= Date.now();
+    state.play.solved = state.play.solved.map(arr => arr.map(() => true));
+    state.librarySolved = state.play.solved[3];
+    scene.setLibraryPanelState(state.play.solved[3]);
     state.play.final = { t0: Date.now(), done: false, pick: [] };
-    scene.warpToRoomForTesting(state.game, 2);
+    scene.warpToRoomForTesting(state.game, 3);
     updateProgress();
     updateObjective();
     updateHud(true);
@@ -749,12 +873,12 @@ function setupKeyboard() {
       syncKeyboardMove();
     }
     if (key === 'e' && state.focusedId) handleInteract(state.focusedId);
-    if (/^[0-9]$/.test(key) && state.mode === 'game' && scene?.isInLibrary?.()) {
+    if (/^[0-9]$/.test(key) && state.mode === 'game') {
       const slot = key === '0' ? 9 : Number(key) - 1;
-      const paperIndex = state.libraryInventory[slot];
-      if (paperIndex != null && equipLibraryPaper(paperIndex)) event.preventDefault();
+      const item = state.paperInventory.filter(paper => paper.areaId === currentPaperArea())[slot];
+      if (item && equipPaper(item.id)) event.preventDefault();
     }
-    if (key === ' ' && state.mode === 'game' && !state.modal) { event.preventDefault(); scene.jump(); }
+    if (key === ' ' && state.mode === 'game' && (!state.modal || isLiveQuestion())) { event.preventDefault(); scene.jump(); }
     if (key === 'f') activateTorch();
     if (key === 'n' && state.mode === 'game') showNotebook();
     if (key === 'escape') {
@@ -875,8 +999,12 @@ modalRoot.addEventListener('click', event => {
       state.pausedModal = null;
       if (savedModal) {
         state.modal = savedModal.modal;
+        const liveQuestion = isLiveQuestion(state.modal?.type);
+        modalRoot.classList.toggle('live-question', liveQuestion);
         modalRoot.innerHTML = savedModal.html;
         modalRoot.hidden = false;
+        scene.setPointerLockEnabled(!liveQuestion);
+        scene.setRendering(liveQuestion);
       } else closeModal(true);
       syncKeyboardMove();
       scheduleGameTick();
@@ -888,8 +1016,10 @@ modalRoot.addEventListener('click', event => {
     }
     return;
   }
-  const answer = event.target.closest('[data-answer-index]');
-  if (answer) return answerCurrentPuzzle(Number(answer.dataset.answerIndex));
+  const wordChoice = event.target.closest('[data-word-choice]');
+  if (wordChoice) return answerPanelWithWord(Number(wordChoice.dataset.wordChoice));
+  const libraryWordChoice = event.target.closest('[data-library-word-choice]');
+  if (libraryWordChoice) return answerLibraryPanel(Number(libraryWordChoice.dataset.libraryWordChoice));
   const key = event.target.closest('[data-key-index]');
   if (key) return answerGoldenKey(Number(key.dataset.keyIndex));
   const eventOption = event.target.closest('[data-event-index]');
@@ -936,10 +1066,34 @@ async function bootstrap() {
   }
 
   $('#start-button').addEventListener('click', startGame);
-  $('#jump-button').addEventListener('click', () => scene.jump());
+  const jumpButton = $('#jump-button');
+  const activateMobileJump = event => {
+    if (event?.cancelable) event.preventDefault();
+    event?.stopPropagation?.();
+    if (!scene || state.mode !== 'game' || state.paused) return;
+    scene.jump();
+    jumpButton.classList.add('pressed');
+  };
+  const releaseMobileJump = () => jumpButton.classList.remove('pressed');
+  // Trigger on pointerdown instead of waiting for a synthesized click. This
+  // works while a second finger is holding the movement joystick and avoids
+  // mobile browsers cancelling the delayed click after touch scrolling.
+  jumpButton.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    activateMobileJump(event);
+    try { jumpButton.setPointerCapture(event.pointerId); } catch { /* optional */ }
+  }, { passive: false });
+  jumpButton.addEventListener('pointerup', releaseMobileJump);
+  jumpButton.addEventListener('pointercancel', releaseMobileJump);
+  jumpButton.addEventListener('lostpointercapture', releaseMobileJump);
+  // Keyboard activation of the native button has detail === 0 and no pointerdown.
+  jumpButton.addEventListener('click', event => {
+    if (event.detail === 0) activateMobileJump(event);
+  });
+  jumpButton.addEventListener('contextmenu', event => event.preventDefault());
   $('#paper-hotbar').addEventListener('click', event => {
-    const slot = event.target.closest('[data-paper-index]');
-    if (slot) equipLibraryPaper(Number(slot.dataset.paperIndex));
+    const slot = event.target.closest('[data-paper-id]');
+    if (slot) equipPaper(slot.dataset.paperId);
   });
   stageSelect.addEventListener('change', updateMenuCopy);
   tierSelect.addEventListener('change', updateMenuCopy);

@@ -39,23 +39,18 @@ function buildVocabPuzzles(content, tier, random) {
   const core = shuffle(content.words, random);
   const stretch = shuffle(content.stretch, random);
   const challenge = shuffle(content.challenge, random);
-  let picks;
-  if (tier >= 2 && stretch.length && challenge.length) picks = [core[0], stretch[0], challenge[0]];
-  else if (tier >= 1 && stretch.length) picks = [core[0], core[1], stretch[0]];
-  else picks = core.slice(0, 3);
+  const source = tier >= 2 ? [...core, ...stretch, ...challenge]
+    : tier >= 1 ? [...core, ...stretch] : core;
+  const unique = [...new Map(source.map(item => [String(item.w).toLowerCase(), item])).values()];
+  const picks = shuffle(unique, random).slice(0, 5);
 
   return picks.map(word => {
-    const pool = (word.extra ? [...stretch, ...challenge] : core).filter(item => item.w !== word.w);
+    const pool = source.filter(item => item.w !== word.w);
     const distractors = shuffle(pool, random).slice(0, 3).map(item => item.w);
     return {
-      kind: 'vocab',
-      word: word.w,
-      unit: 3,
-      tier: word.tier || 0,
-      prompt: 'Tap the word that means…',
-      text: word.def,
-      opts: shuffle([word.w, ...distractors], random),
-      answer: word.w,
+      kind: 'vocab', word: word.w, unit: 3, tier: word.tier || 0,
+      prompt: 'Tap the word that means…', text: word.def,
+      opts: shuffle([word.w, ...distractors], random), answer: word.w,
       hint: `It starts with “${word.w[0]}” and has ${word.w.replace(/[^a-z]/gi, '').length} letters.`
     };
   });
@@ -66,11 +61,10 @@ function buildReadingPuzzles(escape, tier, random) {
   const hard = available.filter(item => item.tier === tier && tier > 0);
   const picks = hard.length ? [shuffle(hard, random)[0]] : [];
   shuffle(available.filter(item => !picks.includes(item)), random).forEach(item => {
-    if (picks.length < 3) picks.push(item);
+    if (picks.length < 5) picks.push(item);
   });
-
-  return shuffle(picks, random).map(item => {
-    const otherNumbers = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9].filter(n => n !== item.a), random).slice(0, 3);
+  return shuffle(picks, random).slice(0, 5).map(item => {
+    const otherNumbers = shuffle([1,2,3,4,5,6,7,8,9].filter(n => n !== item.a), random).slice(0, 3);
     return {
       kind: 'reading', prompt: 'Read the leaflet, then tap the answer.', text: item.q,
       opts: shuffle([item.a, ...otherNumbers], random).map(String), answer: String(item.a),
@@ -80,11 +74,10 @@ function buildReadingPuzzles(escape, tier, random) {
 }
 
 function buildGrammarPuzzles(content, tier, random) {
-  return shuffle(content.grammar, random).slice(0, 3).map(point => {
-    const whole = point.items.filter(item => item[0] === '');
-    const gaps = point.items.filter(item => item[0] !== '');
-    const pool = tier >= 2 && whole.length ? whole : gaps.length ? gaps : whole;
-    const [stem, right, ...wrong] = shuffle(pool, random)[0];
+  const entries = content.grammar.flatMap(point => point.items.map(item => ({ point, item })));
+  const shuffled = shuffle(entries, random).slice(0, 5);
+  return shuffled.map(({ point, item }) => {
+    const [stem, right, ...wrong] = item;
     return {
       kind: 'grammar', point: point.id,
       prompt: stem ? 'Fix the note: tap the right words.' : 'Only one of these sentences is right. Tap it.',
@@ -153,6 +146,82 @@ function makeGoldenKey(content, escape, kind, used, random, archiveUsage = null)
   };
 }
 
+
+function numberWord(value) {
+  const words = ['zero','one','two','three','four','five','six','seven','eight','nine'];
+  return /^\d$/.test(String(value)) ? words[Number(value)] : String(value);
+}
+
+function wordPaperSpots(kind) {
+  // Every loose slip is placed on an actual horizontal search surface. These
+  // coordinates are room-local and match the furniture dimensions/heights in
+  // CanvasMuseumScene. Drawer slips are repositioned into their trays later.
+  const surface = (x, z, y, xs, zs = [z]) =>
+    zs.flatMap(spotZ => xs.map(spotX => ({ x: spotX, y, z: spotZ, width: .62, depth: .38 })));
+
+  const vocab = [
+    ...surface(-3.15, -2.2, 1.55, [-4.0, -2.5], [-2.55, -1.85]),
+    ...surface(0, -2.15, 1.20, [-.32, .32], [-2.48, -1.82]),
+    ...surface(3.12, -2.17, 1.35, [2.48, 3.76], [-2.50, -1.84]),
+    ...surface(-5, 1.45, .62, [-5.55, -4.45]),
+    ...surface(-4.25, -.15, .885, [-4.25], [.22]),
+    ...surface(-.10, 3.15, .905, [.36], [3.47]),
+    ...surface(4.25, -.10, .885, [4.25], [.27]),
+    ...surface(-5.0, -4.1, .865, [-5.0], [-3.82]),
+    ...surface(5.0, -4.1, .865, [5.0], [-3.82]),
+    ...surface(-2.15, -4.8, .865, [-2.15], [-4.50]),
+    ...surface(2.15, -4.8, .865, [2.15], [-4.50])
+  ];
+
+  // The Gallery's four drawer slips are hidden until opened. The remaining
+  // papers sit in two tidy rows on the long central archive table.
+  const reading = surface(0, -2.45, .82,
+    [-2.60, -1.30, 0, 1.30, 2.60], [-2.70, -2.20]);
+
+  // The Storeroom uses cabinet tops, the six existing shelf ledges, the low
+  // display pedestal, and two added side worktables. Four slips are stored in
+  // the drawers; the rest are spread across these physical surfaces.
+  const grammar = [
+    ...surface(-3.7, -2.45, 2.15, [-4.35, -3.05], [-2.82, -2.08]),
+    ...surface(0, -2.35, 1.10, [-.45, .45], [-2.78, -1.92]),
+    ...surface(1.9, .25, .95, [1.60, 2.20]),
+    ...surface(-5.7, -1.0, .88, [-5.7]),
+    ...surface(-5.7, -1.0, 1.78, [-5.7]),
+    ...surface(-5.7, -1.0, 2.68, [-5.7]),
+    ...surface(5.7, -1.0, .88, [5.7]),
+    ...surface(5.7, -1.0, 1.78, [5.7]),
+    ...surface(5.7, -1.0, 2.68, [5.7]),
+    ...surface(-3.0, 3.65, .865, [-3.38, -2.62]),
+    ...surface(3.0, 3.65, .865, [2.62, 3.38])
+  ];
+  return kind === 'vocab' ? vocab : kind === 'reading' ? reading : grammar;
+}
+
+function buildWordPapers(puzzles, kind, random) {
+  const byValue = new Map();
+  for (let panelIndex = 0; panelIndex < puzzles.length; panelIndex++) {
+    const puzzle = puzzles[panelIndex];
+    const candidates = [puzzle.answer, ...shuffle((puzzle.opts || []).filter(option => String(option) !== String(puzzle.answer)), random).slice(0,3)];
+    for (const raw of candidates) {
+      const value = String(raw);
+      const key = value.trim().toLocaleLowerCase();
+      if (!key || byValue.has(key)) continue;
+      byValue.set(key, {
+        id: byValue.size,
+        value,
+        display: numberWord(value),
+        kind: puzzle.kind,
+        sourcePanel: panelIndex,
+        title: numberWord(value),
+        body: puzzle.kind === 'reading' ? 'A number found in the visitor information.' : 'A word or phrase recovered from a loose note.'
+      });
+    }
+  }
+  const cards = [...byValue.values()];
+  const spots = shuffle(wordPaperSpots(kind), random);
+  return cards.map((card, index) => ({ ...card, ...(spots[index % spots.length] || spots[0]) }));
+}
+
 function makeGame(stage = 9, tier = 0, seed = Date.now()) {
   const content = CONTENT[stage] || CONTENT[9];
   const escape = content.escape;
@@ -173,7 +242,8 @@ function makeGame(stage = 9, tier = 0, seed = Date.now()) {
     return {
       name: room.name, scene: room.scene, kind: room.kind, lock: room.lock,
       keyObject: room.keyObject,
-      puzzles: puzzles.map((puzzle, index) => ({ ...puzzle, object: room.objects[index], gives: code[index] })),
+      puzzles: puzzles.map((puzzle, index) => ({ ...puzzle, object: room.objects[index] || `Archive clue ${index + 1}`, gives: code[index] })),
+      wordPapers: buildWordPapers(puzzles, room.kind, random),
       code,
       key: makeGoldenKey(content, escape, room.kind, puzzles, random, archiveUsage),
       event: room.kind === 'reading'
@@ -181,6 +251,26 @@ function makeGame(stage = 9, tier = 0, seed = Date.now()) {
         : { type: 'footsteps', at: 25 + Math.floor(random() * 25) }
     };
   });
+
+  const librarySpecs = [
+    { object:'Cataloguing', text:'What is the process of assigning a title and catalogue number to each book?', answer:'Cataloguing', gives:'S' },
+    { object:'Conservation', text:'Which practice protects old books and documents from damage?', answer:'Conservation', gives:'T' },
+    { object:'Classification', text:'What is the system of arranging books by subject?', answer:'Classification', gives:'A' },
+    { object:'Acquisitions', text:'What is the library process of adding new books to its collection?', answer:'Acquisitions', gives:'C' },
+    { object:'Restoration', text:'What is the repair of damaged books and historical documents called?', answer:'Restoration', gives:'K' }
+  ];
+  const libraryRoom = {
+    name: 'The library archive',
+    scene: 'The final archive is locked. Search the shelves and drawers for five terms, then use them at the archive answer panels to reveal the exit code.',
+    kind: 'library', lock: 'letters', keyObject: null,
+    puzzles: librarySpecs.map((item, index) => ({
+      kind:'library', prompt:'ARCHIVE KNOWLEDGE', text:item.text, answer:item.answer,
+      opts:[item.answer], object:item.object, gives:item.gives, hint:'Search the shelves and archive drawers for this term.'
+    })),
+    wordPapers: [], code: librarySpecs.map(item => item.gives),
+    key: null, event: { type:'none', at: 0 }
+  };
+  rooms.push(libraryRoom);
 
   const usedWords = new Set(rooms.flatMap(room => room.puzzles.filter(p => p.kind === 'vocab').map(p => p.word)));
   const quick = shuffle(content.words.filter(word => !usedWords.has(word.w)), random);
@@ -218,7 +308,7 @@ function newPlay(game, now = Date.now()) {
     solved: game.rooms.map(room => room.puzzles.map(() => false)),
     tries: game.rooms.map(room => room.puzzles.map(() => 0)),
     hints: game.rooms.map(room => room.puzzles.map(() => false)),
-    wrongCodes: 0, dial: [0, 0, 0], open: null, out: false,
+    wrongCodes: 0, dial: Array.from({ length: game.rooms[0].code.length }, () => 0), open: null, out: false,
     roomStart: game.rooms.map((room, index) => index ? null : now),
     keys: game.rooms.map(() => null), events: game.rooms.map(() => null),
     torchUntil: 0, final: null, caught: false, eventStarted: null
@@ -281,7 +371,7 @@ function tryCode(game, play, code, now = Date.now()) {
     }
     play.room++;
     play.open = null;
-    play.dial = [0, 0, 0];
+    play.dial = Array.from({ length: game.rooms[play.room].code.length }, () => 0);
     play.roomStart[play.room] = now;
     return { ok: true, final: false };
   }
@@ -314,7 +404,7 @@ function resultFor(game, play, now = Date.now()) {
 }
 
 window.EscapeGame = {
-  RULES, seededRandom, makeGame, newPlay, solvedCount, roomSeconds, escapeSeconds,
+  RULES, seededRandom, makeGame, buildWordPapers, newPlay, solvedCount, roomSeconds, escapeSeconds,
   guardLeft, finalLeft, leafletDark, stars, answerPuzzle, answerKey, answerEvent,
   takeHint, useTorch, tryCode, finishFinal, resultFor
 };

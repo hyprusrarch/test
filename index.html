@@ -74,13 +74,13 @@ h1 em { color: #d9b47d; font-weight: 400; }
 .objective-card strong { display: block; margin-top: 7px; font-family: var(--serif); font-size: 20px; font-weight: 400; color: #f0e7d7; }
 .objective-sub { display: block; margin-top: 5px; color: #a9b2aa; font-size: 10px; line-height: 1.45; }
 .objective-label { font-size: 7px; }
-.progress-strip { position: absolute; left: 50%; top: 99px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 10px 15px; background: rgba(12, 20, 25, .64); border: 1px solid rgba(230, 205, 164, .12); border-radius: 3px;  }
-.progress-item { display: flex; align-items: center; gap: 7px; color: #78847e; font-size: 7px; letter-spacing: .12em; white-space: nowrap; }
+.progress-strip { position: absolute; left: 50%; top: 99px; max-width: calc(100vw - 32px); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 10px 15px; background: rgba(12, 20, 25, .64); border: 1px solid rgba(230, 205, 164, .12); border-radius: 3px;  }
+.progress-item { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; color: #78847e; font-size: 7px; letter-spacing: .12em; white-space: nowrap; }
 .progress-item b { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid rgba(220, 217, 199, .22); border-radius: 50%; font-size: 8px; font-weight: 600; }
 .progress-item.active { color: #e3c28e; }
 .progress-item.active b, .progress-item.done b { border-color: var(--gold); background: rgba(216, 175, 112, .18); color: var(--gold-bright); }
 .progress-item.done { color: #a6c3aa; }
-.progress-line { height: 1px; width: 24px; background: rgba(210, 183, 138, .26); }
+.progress-line { height: 1px; width: 24px; flex: 0 0 auto; background: rgba(210, 183, 138, .26); }
 .target-hint { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%); display: flex; gap: 9px; align-items: center; padding: 10px 14px; color: #efe6d6; background: rgba(9, 17, 22, .84); border: 1px solid rgba(217, 179, 119, .38); border-radius: 5px;  font-size: 10px; pointer-events: none; white-space: nowrap; }
 .target-ring { width: 8px; height: 8px; border: 1px solid var(--gold); border-radius: 50%; box-shadow: 0 0 10px var(--gold); }
 .target-hint kbd { margin-left: 6px; padding: 4px 6px; border: 1px solid rgba(239, 222, 188, .24); color: var(--gold-bright); border-radius: 3px; font-size: 7px; letter-spacing: .12em; }
@@ -105,10 +105,25 @@ h1 em { color: #d9b47d; font-weight: 400; }
 .paper-hotbar-slot .paper-slot-art { display: block; min-height: 19px; overflow: hidden; padding: 3px 4px; border: 1px solid rgba(121,101,73,.35); background: #e8dfc9; color: #514638; font: 5px/1.25 ui-monospace,monospace; white-space: normal; text-align: left; }
 .paper-hotbar-slot strong { overflow: hidden; color: #d5d0c3; font-size: 6px; font-weight: 600; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
 .paper-hotbar-slot.selected { border-color: #ddb77a; background: rgba(212,174,113,.22); box-shadow: inset 0 0 0 1px rgba(221,183,122,.14); }
+.word-choice-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:8px; }
+.word-choice { display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-height:54px; }
+.word-choice strong { color:#f0e3c9; font-size:13px; line-height:1.25; }
+.word-choice small { color:#bd9b69; font-size:8px; letter-spacing:.13em; }
+.word-choice:disabled { opacity:.55; }
 
 .modal-root { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(3, 8, 11, .44);  pointer-events: auto; animation: fade .18s ease-out; }
 .modal-card { width: min(620px, 94vw); max-height: min(86vh, 780px); overflow: auto; padding: 27px 30px 25px; background: linear-gradient(155deg, rgba(18, 29, 35, .98), rgba(10, 18, 23, .98)); border: 1px solid rgba(222, 188, 132, .3); border-radius: 7px; box-shadow: 0 28px 90px rgba(0,0,0,.55); overscroll-behavior: contain; }
 .modal-card.narrow { width: min(460px, 94vw); }
+/* Paper questions are lightweight, non-blocking panels. The transparent root
+   lets the player keep using the canvas and mobile joystick underneath it. */
+.modal-root.live-question { display: block; padding: 0; background: transparent; pointer-events: none; animation: none; }
+.modal-root.live-question .live-question-card { position: absolute; top: 88px; right: 20px; width: min(390px, calc(100vw - 36px)); max-height: min(72vh, 620px); padding: 19px 20px 16px; pointer-events: auto; box-shadow: 0 14px 44px rgba(0,0,0,.42); }
+.modal-root.live-question .live-question-card h2 { font-size: 25px; }
+.modal-root.live-question .live-question-card .question-box { font-size: 13px; padding: 12px 13px; margin: 10px 0; }
+.modal-root.live-question .live-question-card .answer-list { gap: 6px; margin-top: 9px; }
+.modal-root.live-question .live-question-card .answer-option { min-height: 39px; padding: 8px 10px; font-size: 10px; }
+.modal-root.live-question .live-question-card .modal-actions { margin-top: 10px; }
+
 .modal-kicker { margin: 0 0 9px; color: var(--gold); font-size: 8px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
 .modal-card h2 { margin: 0 0 12px; color: var(--ink); font: 400 32px/1.05 var(--serif); }
 .modal-desc { margin: 0 0 18px; color: #b4bcb2; font-size: 12px; line-height: 1.6; }
@@ -164,6 +179,15 @@ h1 em { color: #d9b47d; font-weight: 400; }
 @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+/* Small interaction cues add motion without running a permanent CSS animation. */
+.progress-item { transition: color .22s ease, opacity .22s ease, transform .22s ease; }
+.progress-item.active b { box-shadow: 0 0 0 3px rgba(220,185,127,.10), 0 0 18px rgba(220,185,127,.18); }
+.target-hint { transition: opacity .16s ease, transform .16s ease; }
+.paper-hotbar-slot, .solved-paper-row, .answer-option, .final-tile { transition: background .16s ease, border-color .16s ease, transform .16s ease, opacity .16s ease; }
+.paper-hotbar-slot:active, .answer-option:active, .final-tile:not(:disabled):active { transform: translateY(1px) scale(.985); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
 @media (max-width: 900px) {
   .topbar { padding: 0 22px; }
   .objective-card { top: 87px; left: 18px; width: min(280px, 38vw); }
@@ -186,7 +210,8 @@ h1 em { color: #d9b47d; font-weight: 400; }
   .eyebrow { font-size: 7px; }
   h1 { margin: 14px 0 12px; font-size: clamp(40px, 12vw, 53px); }
   .menu-copy { margin-bottom: 16px; font-size: 11px; line-height: 1.5; }
-  .mobile-jump { pointer-events: auto; position: absolute; right: 17px; bottom: 72px; width: 54px; height: 54px; border-radius: 50%; border: 1px solid rgba(221,192,145,.45); background: rgba(14,24,29,.86); color: #e6d0a9; font-size: 9px; letter-spacing: .08em; }
+  .mobile-jump { display: grid; place-items: center; pointer-events: auto; position: absolute; z-index: 20; right: 17px; bottom: 72px; width: 58px; height: 58px; border-radius: 50%; border: 1px solid rgba(221,192,145,.55); background: rgba(14,24,29,.92); color: #e6d0a9; font-size: 10px; font-weight: 800; letter-spacing: .08em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  .mobile-jump.pressed { background: rgba(190,145,82,.94); transform: scale(.96); }
   .menu-fields { gap: 8px; margin-bottom: 11px; }
   .menu-fields select { height: 39px; font-size: 10px; padding: 0 8px; }
   .primary-button { height: 45px; }
@@ -196,12 +221,12 @@ h1 em { color: #d9b47d; font-weight: 400; }
   .objective-card { top: 72px; left: 12px; width: min(250px, 63vw); padding: 10px 12px 11px; }
   .objective-card strong { font-size: 17px; margin-top: 5px; }
   .objective-sub { font-size: 9px; }
-  .progress-strip { top: auto; bottom: 14px; left: 50%; gap: 5px; padding: 7px 8px; transform: translateX(-50%); max-width: calc(100vw - 22px); }
+  .progress-strip { top: auto; bottom: 14px; left: 50%; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 7px 8px; transform: translateX(-50%); max-width: calc(100vw - 22px); }
   .progress-item { gap: 4px; font-size: 5.7px; letter-spacing: .07em; }
   .progress-item b { width: 17px; height: 17px; font-size: 7px; }
-  .progress-line { width: 12px; }
+  .progress-line { width: 8px; }
   .control-hint { display: none; }
-  .mobile-controls { display: flex; position: absolute; left: 0; right: 0; bottom: max(68px, calc(env(safe-area-inset-bottom) + 58px)); align-items: flex-end; justify-content: space-between; padding: 0 18px; pointer-events: none; }
+  .mobile-controls { display: flex; position: absolute; z-index: 15; left: 0; right: 0; bottom: max(68px, calc(env(safe-area-inset-bottom) + 58px)); align-items: flex-end; justify-content: space-between; padding: 0 18px; pointer-events: none; }
   .joystick { position: relative; width: 112px; height: 112px; pointer-events: auto; touch-action: none; }
   .joystick-ring { position: absolute; inset: 4px; border-radius: 50%; border: 1px solid rgba(230, 208, 171, .35); background: rgba(9, 17, 21, .22); box-shadow: inset 0 0 25px rgba(0,0,0,.12); }
   .joystick-knob { position: absolute; left: 50%; top: 50%; width: 43px; height: 43px; margin: -21.5px 0 0 -21.5px; border: 1px solid rgba(239, 205, 151, .68); border-radius: 50%; background: rgba(210, 172, 111, .44); box-shadow: 0 3px 17px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.15); }
@@ -219,6 +244,13 @@ h1 em { color: #d9b47d; font-weight: 400; }
   .modal-root { align-items: center; padding: 12px; }
   .modal-card, .modal-card.narrow { width: 100%; max-width: 520px; max-height: 88dvh; padding: 20px 18px 17px; }
   .modal-card h2 { font-size: 28px; }
+  .modal-root.live-question .live-question-card { top: 78px; right: 9px; width: min(330px, calc(100vw - 18px)); max-height: min(48dvh, 420px); padding: 13px 13px 11px; }
+  .modal-root.live-question .live-question-card h2 { font-size: 21px; }
+  .modal-root.live-question .live-question-card .modal-desc { font-size: 10px; margin-bottom: 7px; }
+  .modal-root.live-question .live-question-card .question-box { font-size: 11px; padding: 9px 10px; margin: 8px 0; }
+  .modal-root.live-question .live-question-card .answer-list { grid-template-columns: 1fr 1fr; gap: 5px; }
+  .modal-root.live-question .live-question-card .answer-option { min-height: 34px; padding: 7px; font-size: 9px; }
+
   .modal-desc { font-size: 11px; margin-bottom: 12px; }
   .question-box { padding: 12px; font-size: 13px; margin: 12px 0; }
   .answer-list { grid-template-columns: 1fr; gap: 7px; margin-top: 10px; }
@@ -250,7 +282,9 @@ h1 em { color: #d9b47d; font-weight: 400; }
 /* Touch-first landscape devices are not always narrow enough for the portrait breakpoint. */
 @media (pointer: coarse) and (min-width: 681px) {
   .control-hint { display: none; }
-  .mobile-controls { display: flex; position: absolute; left: 0; right: 0; bottom: 62px; align-items: flex-end; justify-content: space-between; padding: 0 22px; pointer-events: none; }
+  .mobile-controls { display: flex; position: absolute; z-index: 15; left: 0; right: 0; bottom: 62px; align-items: flex-end; justify-content: space-between; padding: 0 22px; pointer-events: none; }
+  .mobile-jump { display: grid; place-items: center; pointer-events: auto; position: absolute; z-index: 20; right: 18px; bottom: 72px; width: 58px; height: 58px; border-radius: 50%; border: 1px solid rgba(221,192,145,.55); background: rgba(14,24,29,.92); color: #e6d0a9; font-size: 10px; font-weight: 800; letter-spacing: .08em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  .mobile-jump.pressed { background: rgba(190,145,82,.94); transform: scale(.96); }
   .joystick { position: relative; width: 94px; height: 94px; pointer-events: auto; touch-action: none; }
   .joystick-ring { position: absolute; inset: 4px; border-radius: 50%; border: 1px solid rgba(230, 208, 171, .35); background: rgba(9, 17, 21, .22); }
   .joystick-knob { position: absolute; left: 50%; top: 50%; width: 39px; height: 39px; margin: -19.5px 0 0 -19.5px; border: 1px solid rgba(239, 205, 151, .68); border-radius: 50%; background: rgba(210, 172, 111, .44); }
@@ -316,10 +350,10 @@ h1 em { color: #d9b47d; font-weight: 400; }
         </div>
         <button class="primary-button" id="start-button" type="button" disabled>Loading scene <span>…</span></button>
         <p class="launch-note" id="launch-note" hidden>No server is required. Open <code>index.html</code> directly in a modern browser.</p>
-        <div class="menu-foot"><span>4 AREAS</span><i></i><span>9 CLUES</span><i></i><span>12 MINUTES</span></div>
+        <div class="menu-foot"><span>4 AREAS</span><i></i><span>20 PANELS</span><i></i><span>12 MINUTES</span></div>
         <div class="best-record" id="best-record">NO ESCAPE RECORD YET</div>
       </div>
-      <div class="menu-side-note"><span>01 / 03</span><span>AN INTERACTIVE ENGLISH ESCAPE ROOM</span></div>
+      <div class="menu-side-note"><span>01 / 04</span><span>AN INTERACTIVE ENGLISH ESCAPE ROOM</span></div>
     </main>
 
     <section id="game-ui" class="game-ui" hidden>
@@ -329,8 +363,8 @@ h1 em { color: #d9b47d; font-weight: 400; }
         <span class="objective-sub" id="objective-sub">Tap the objects to inspect them.</span>
       </div>
       <div id="solved-paper-stack" class="solved-paper-stack" aria-label="Solved room code papers" hidden></div>
-      <div id="paper-hotbar" class="paper-hotbar" aria-label="Library paper hotbar" hidden>
-        <span class="paper-hotbar-label">ARCHIVE PAPERS · SELECT WITH 1–0</span>
+      <div id="paper-hotbar" class="paper-hotbar" aria-label="Collected paper hotbar" hidden>
+        <span class="paper-hotbar-label">FOUND WORDS · SELECT WITH 1–0</span>
         <div id="paper-hotbar-slots" class="paper-hotbar-slots"></div>
       </div>
       <div class="progress-strip" id="progress-strip">
@@ -339,6 +373,8 @@ h1 em { color: #d9b47d; font-weight: 400; }
         <span class="progress-item"><b>02</b><span>GALLERY</span></span>
         <span class="progress-line"></span>
         <span class="progress-item"><b>03</b><span>STOREROOM</span></span>
+        <span class="progress-line"></span>
+        <span class="progress-item"><b>04</b><span>LIBRARY</span></span>
       </div>
       <div class="target-hint" id="target-hint" hidden><span class="target-ring"></span><span id="target-label">Inspect object</span><kbd>CLICK / E</kbd></div>
       <div class="control-hint" id="control-hint"><span>W A S D</span> MOVE <i></i> <span>CLICK SCENE</span> LOCK MOUSE <i></i> <span>DRAG</span> LOOK</div>
@@ -348,7 +384,7 @@ h1 em { color: #d9b47d; font-weight: 400; }
         <button class="mobile-tool" id="torch-button" type="button" hidden>TORCH <span>◉</span></button>
         <button class="mobile-jump" id="jump-button" type="button">JUMP</button>
       </div>
-      <div class="room-footer"><span id="solved-label">CLUES FOUND · 0 / 3</span><span id="key-label">GOLDEN KEYS · 0 / 3</span></div>
+      <div class="room-footer"><span id="solved-label">CODE CHARACTERS · 0 / 5</span><span id="key-label">GOLDEN KEYS · 0 / 3</span></div>
     </section>
 
     <div id="modal-root" class="modal-root" hidden></div>

@@ -1,47 +1,61 @@
 # After Hours — HTML + JavaScript Escape Room
 
-A split-source museum escape room built with native HTML, embedded CSS, and JavaScript. The 3D-style scene is software-rendered with Canvas 2D perspective projection. No WebGL engine, Three.js, npm packages, frameworks, external JavaScript imports, backend, or build step are required.
+A split-source museum escape room built with native HTML, embedded CSS, and JavaScript. The 3D-style scene is software-rendered with Canvas 2D perspective projection. No WebGL engine, Three.js, npm packages, framework, external JavaScript import, multiplayer backend, or build step is required.
 
 ## Run
 
-Open `index.html` in a current browser. No local server is required. On Linux, you can also run `python3 -m http.server 8000` in this directory and open `http://localhost:8000`.
+Open `index.html` in a current browser. A local server is optional; on Linux, `python3 -m http.server 8000` works from this directory.
 
 ## Project layout
 
 - `index.html` — page structure and embedded styles
-- `js/data.js` — Stage 8 and Stage 9 museum content
-- `js/gallery-art.js` — embedded user-provided gallery photograph
+- `js/data.js` — Stage 8 and Stage 9 ESL content
+- `js/gallery-art.js` — embedded original gallery photograph
+- `assets/gallery-photo.png` — byte-identical standalone fallback for the original gallery photograph
 - `js/konami.js` — hidden developer test-menu sequence
-- `js/tech-archive.js` — optional Stage 9 technology bonus
-- `js/game.js` — puzzles, scoring, penalties, timers, and progression
-- `js/canvas-scene.js` — Canvas 2D renderer, movement, collision, whole-world visibility culling, and interactions
-- `js/app.js` — menus, game flow, modal puzzles, and UI controls
-- `tests/smoke.js` — renderer and game regression checks
+- `js/tech-archive.js` — Stage 9 technology bonus content
+- `js/game.js` — puzzle generation, word banks, codes, scoring, penalties, timers, and four-room progression
+- `js/canvas-scene.js` — Canvas 2D renderer, movement, collision, platforms, visibility culling, drawers, and object interactions
+- `js/app.js` — menus, game flow, word-scavenger progression, hotbar, answer panels, and UI controls
+- `tests/smoke.js` — regression tests for both stages and all difficulties
 
 ## Controls
 
-Desktop: WASD or arrow keys to move. Click the 3D scene to capture the mouse; move the mouse to look. Press E or click a highlighted object to interact. Space jumps, or stands up when seated. E on a chair sits down or stands up. N opens the notebook, F activates the torch during the blackout event, and Escape releases the mouse and pauses.
+Desktop: WASD/arrows move; click the scene to lock the mouse; mouse movement looks around; E or click interacts; Space jumps/stands; N opens the notebook; F uses the torch during the blackout event; Escape releases the mouse and pauses. Press 1–0 to select a collected word slip.
 
-Mobile: use the virtual joystick to move, swipe the scene to look, tap highlighted objects to interact, and use JUMP to jump or stand up. Tap a chair to sit down.
+Mobile: use the virtual joystick to move, swipe the scene to look, tap interaction targets, and use JUMP to jump/stand. Tap a chair to sit.
 
-## World, rooms, and visibility
+## Four-room progression
 
-The three progression rooms and optional Library remain resident in memory. Rendering is room-aware: only the room occupied by the player renders its furniture, papers, shelves and paintings. Adjacent rooms contribute their actual enclosing perimeter walls and connector architecture only; no temporary doorway backdrops are used. Each progression room has a complete perimeter (front, rear, left and right walls), with real openings at the connecting doors. The Storeroom and Library show the real wall surfaces around their connecting opening from either side, while adjacent-room furniture and papers remain hidden. Faces are culled only when fully behind the near plane or wholly outside the viewport; partially visible faces are retained. No back-face or polygon-winding culling is used. Door unlocks remove the corresponding door panel, keypad and collision barrier. The three museum rooms are enlarged by 25% and remain connected by walkable corridors. The optional Library branches from the Storeroom through an open doorway and can be visited without changing the three-lock escape progression.
+The progression is Ticket Hall → Gallery → Storeroom → Library. The Library is the final room, not a disconnected bonus. Each of the four rooms has five physical answer panels and a five-character lock code (20 answer panels total). Solving the Storeroom exit lock opens the physical connector into the Library. The Storeroom's five answer panels are mounted on its opposite wall and face into the Storeroom; its exit door remains on the rear Library connector wall, with a separate keypad mounted beside the doorway. The five Library panels recover the final archive code; its lock leads to the final timed word scramble.
 
-The Library contains 20 bookcases arranged in four rows and five columns. Each bookcase has eight shelf levels and five cubby columns. The shelves are populated with varied upright books in muted colors; each has a visible spine, side and top face, with simple gilt spine bands. Book geometry is kept to three quads per book to avoid the cost of full six-face boxes. Ten small papers are distributed across ten distinct bookcases using a per-run seeded random layout. Each paper is mounted directly against the aisle-facing shelf end plane, just 0.006 world units beyond the wood edge to avoid z-fighting without visibly floating in front of the shelf. Papers share the shelf depth-sorting layer instead of being forced into a foreground overlay, so a paper viewed from behind a shelf is correctly hidden by the wood. Their muted paper color and varied shelf positions keep them discoverable without making every clue immediately obvious. Press E or tap a paper nearby to collect it. Collected papers are removed from the shelf, automatically added to the Library hotbar and equipped without opening a modal, so movement continues. Each hotbar slot shows a miniature paper preview and title. Newly collected papers are equipped automatically. Select a hotbar slot or press 1–0 to equip a different paper; movement remains enabled while a paper is equipped. The hotbar and held-paper view are cleared when leaving the Library.
+The first three museum room footprints use a compact 1.5× room scale, with their centres spaced 23.5 world units apart. The Library retains its smaller 1.25× footprint and connects directly to the Storeroom through a short passage. Room walls and floors define the larger footprint, while individual furniture, doors, drawers, answer panels, photographs and paper slips keep their normal object dimensions and consistent object-space coordinates. The Ticket Hall spawn is positioned beside the furnished search area rather than in the middle of the expanded floor.
 
-When a clue is solved, its code character appears in a vertical paper stack at the bottom-left of the screen (for example, `1 = R`). The stack changes to the current room's solved clues and clears when the next room is unlocked.
+All four room geometry groups remain resident. Rendering is room-aware: the active room's furniture, papers, shelves and paintings are drawn, with adjacent rooms contributing only their actual enclosing perimeter walls and connector surfaces. There are no temporary doorway backdrops. Faces are culled only when fully behind the near plane or completely outside the viewport; partially visible faces and reversed-winding polygons remain. No back-face or polygon-winding culling is used. Door unlocks remove the corresponding door, keypad and collision barrier.
 
-The main Canvas 2D scene intentionally renders at reduced resolution to lower CPU and memory use. Gallery paintings are drawn on a separate cropped transparent canvas at device-pixel-ratio resolution, with nearer scene faces masking the artwork so furniture continues to occlude it correctly. The gallery overlay only allocates pixels around the visible paintings rather than creating a second full-screen high-resolution surface.
+## Word scavenger and answer panels
 
-Static geometry is cached between camera frames. The animation loop sleeps while idle, when movement is blocked, and while the tab is hidden. Jumping uses a gravity arc and airborne movement boost, with strict player-head clearance that keeps the full player below room roofs, including when jumping from raised platforms. Low desks and tables are platform surfaces: the player can land on their tops, walk across them, and fall naturally after stepping off. Chairs remain solid and interactive but are not treated as platforms; full-height shelving and walls remain impassable. Canvas 2D does not provide a hardware depth buffer, so complex intersecting surfaces can still show painter-order artifacts. Polygons remain intact quads/surfaces rather than being split into triangles.
-## Interactions
+The old paper-pickup quiz interaction is removed. The three main rooms distribute full-size cream-coloured candidate word slips around furniture and tables, restoring the earlier readable paper appearance and interaction range. Loose papers remain collectible and have no glowing world markers. Library papers use their original readable dimensions and warmer paper stock. Each of five answer panels displays an ESL clue and accepts only a word the player has actually collected in the current room. Picking up a slip adds it to the room's hotbar and equips it; it does not open a modal. Correct answers reveal one lock character in panel order. Incorrect answers incur the standard time penalty and are remembered for that panel. Collected words remain available for other panels. The room hotbar clears when the player enters another room.
 
-Clue papers are single raised quadrilateral surfaces on tables; their printed lines and clue/code label are drawn inside the same projected face to avoid coplanar flicker. Click a paper or aim at it and press E to open its puzzle. Once solved, its paper shows the recovered code digit. Library archive papers sit flush against the aisle-facing ends of the shelf cubbies, are automatically added to an equipped hotbar with miniature previews, can be carried while moving, and are cleared from the hotbar when leaving the Library. Chairs face the table side of each room, and sitting uses a raised seated-eye camera position. Four gallery frames use the uploaded photograph and can be inspected to open a larger view. Chairs have solid collision and can be sat on. Jumping uses a simple vertical gravity arc.
+The Library follows the same final-room scavenger flow. It contains 20 bookcases in a four-row by five-column layout; each case has eight shelf levels and five cubby columns. Book spines, side faces and top faces populate the shelves. Ten archive word slips are distributed across ten different bookcases using a per-run seeded layout, with additional words in three archive drawers. The five Library answer panels accept collected archive words and produce the final code `STACK`.
 
-## Developer test menu
+Each main room has five physical answer panels and receives up to twenty candidate word slips (reading rooms have a smaller unique set because their number answers are drawn from 1–9). Loose slips are generated from the actual tabletop and shelf surfaces in each room, using the same local coordinates and heights as the rendered furniture. This keeps papers from floating beside desks, clipping below table tops or appearing on chair seats. Papers are intact quads with their printed word drawn on the same face. Drawers slide open and closed; contained papers are hidden and non-interactable while closed. The Ticket Hall has seven additional work tables with books, document trays, a pen cup, a lamp and archive clutter, plus twelve additional drawers: some contain extra word slips and others are intentionally empty. Together with its original drawers, the Ticket Hall has fourteen drawers to search. The Storeroom has two matching side worktables with collision and paper placement. The Gallery keeps its long central archive table and uses its top for loose clues.
 
-During gameplay, enter the Konami Code: Up, Up, Down, Down, Left, Right, Left, Right, B, A. The hidden menu can add five minutes, solve the current room clues, move to a later room for testing, or open the final exit lock. These actions affect only the current run.
+Solved code characters are shown vertically at the bottom-left of the HUD and clear on room progression. The word hotbar is room-scoped. The larger equipped-paper preview remains visible while moving and can be selected with keys 1–0.
+
+## World, movement, and rendering
+
+The camera framing has been restored to the original pre-120 setting (approximately 90° horizontal FOV at a 16:9 viewport; focal length = 0.90 × viewport height). Movement speed remains 4.05 world units per second, 1.5× the earlier 2.7 value. First-person pointer lock, mobile joystick/swipe controls, a touch-captured JUMP button, chair seating, jumping, and low furniture platforms remain. Low desks and tables can be landed on and walked across; stepping off causes a fall. The player head remains below the 4.5-unit room ceiling, including when jumping from raised platforms. Walls and full-height shelves remain solid.
+
+The main Canvas 2D scene renders at reduced resolution with a strict pixel budget. The renderer collects the active room's faces and only neighbouring boundary/connector faces before transforming vertices; inactive-room furniture is not projected. Per-frame draw records, hotspot records, room-group lists and vertex transforms are reused, and screen-space bounds provide a broad-phase check for hotspot occlusion. Gallery paintings use a separate high-resolution transparent overlay capped at 700,000 backing-store pixels. Their occlusion mask is stable and layer-based: only foreground prop layers can mask the wall-mounted artwork. It does not use frame-to-frame average-depth thresholds. The original gallery photograph is restored in all four frames and in the image viewer; `assets/gallery-photo.png` is an exact fallback copy of the embedded image.
+
+Ambient animation is isolated on a second transparent overlay with a strict 260,000-pixel backing-store budget and an 18 FPS cap. The main scene has its own 340,000–480,000-pixel budget depending on device capability; the limits remain effective at 1440p and larger viewports. It adds restrained floating dust, pulsing lamp halos, a working wall clock in the Ticket Hall, a rotating ventilation fan in the Storeroom, and occasional light glints across the Gallery photographs. Drawers ease open and closed with frame-rate-independent motion. The effects loop runs only during active gameplay, stops when the tab is hidden or rendering is disabled, and respects `prefers-reduced-motion`. UI controls also use short transitions with a reduced-motion override. New wall fixture plates and Gallery caption rails add detail without increasing the main render resolution.
+
+Static geometry and gradients are cached; the main render loop sleeps while idle, when movement is blocked, and while the tab is hidden. The ambient overlay does not force the main geometry renderer to redraw, except while a drawer is physically moving. Canvas 2D has no hardware depth buffer, so complex intersecting geometry can still show painter-order limitations. Surfaces remain intact quads/polygons rather than being split into triangle fans.
+
+## Optional ESL bonus and developer tools
+
+Stage 9 retains the optional technology vocabulary/project-language challenge. Stage 8 uses its original content. During gameplay, enter the Konami Code: Up, Up, Down, Down, Left, Right, Left, Right, B, A. The hidden test menu can add five minutes, solve the current room clues, move to a room for testing, or open the final exit sequence. Cheats affect only the current run.
 
 ## Tests
 
@@ -51,11 +65,4 @@ With Node.js installed, run:
 node tests/smoke.js
 ```
 
-The tests cover Stage 8/9 content, all difficulty tiers, resident full-world geometry, room-aware prop culling and surrounding perimeter walls, conservative fully-offscreen face culling, platform landing/walking/falling, physical door opening, continuous room geometry, Library layout, populated bookcases and flush shelf-end paper placement, collectible paper removal, equipped-paper state, hotbar markup, leaving-Library cleanup, roof clearance while jumping from a raised platform, bottom-left solved-code display markup, chair interactions, actual jump clearance across a desk, pointer lock, mouse sensitivity, low-resolution scene rendering, high-resolution gallery artwork overlay, idle invalidation, and local HTML/JavaScript resource references.
-
-
-## Map and library additions
-
-All three progression rooms and the optional library are resident from the start. Geometry is only culled when a face is behind the camera or completely outside the viewport; unlocking doors no longer loads/unloads rooms. The main museum spaces are enlarged by 25% in X/Z. An optional library branch connects to the storeroom and contains 20 bookcases arranged in four rows and five columns. Each case has eight shelf rows and five cubby columns. Book spines, side faces and top faces populate the cubbies; ten archival papers are placed in deterministic pseudo-random cubbies directly against the shelf end plane and can be collected at close range and carried in the Library hotbar without opening a modal.
-
-Solved room-code characters are shown as a vertical stack in the bottom-left HUD and clear when the next room is unlocked. Jumping can clear low furniture while tall objects and shelves remain solid.
+The tests cover Stage 8 and Stage 9 at Core, Stretch and Challenge; five panels and five code characters in every room; collected-word answers; four-room progression and final Library lock; full-size readable paper slips; seven additional Ticket Hall tables with tabletop props; fourteen Ticket Hall drawers with both empty and paper-filled trays; 20 bookcases and ten Library notes; all-room geometry; active-room prop culling; restored original FOV; enlarged room shells with unchanged object-space positions and dimensions; matching collision, paper-hotspot and drawer transforms; 1.5× movement speed; stable gallery painting masking; restored gallery image bytes and fallback asset; drawer easing; ambient overlay creation and drawing; reduced-motion styling; and local HTML/JavaScript references.

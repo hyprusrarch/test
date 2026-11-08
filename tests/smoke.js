@@ -1,478 +1,409 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const assert = require('node:assert/strict');
+
 global.window = global;
 const documentListeners = {};
-global.document = { pointerLockElement: null, addEventListener(name, fn) { documentListeners[name] = fn; }, removeEventListener() {}, exitPointerLock() { this.pointerLockElement = null; documentListeners.pointerlockchange?.(); } };
-global.navigator = global.navigator || { deviceMemory: 4 }; 
-global.Image = class { constructor() { this.complete = true; this.naturalWidth = 240; this.naturalHeight = 240; this.width = 240; this.height = 240; } set src(value) { this._src = value; this.onload?.(); } };
+global.document = {
+  hidden: false,
+  pointerLockElement: null,
+  addEventListener(name, fn) { documentListeners[name] = fn; },
+  removeEventListener() {},
+  exitPointerLock() { this.pointerLockElement = null; documentListeners.pointerlockchange?.(); }
+};
+global.navigator = { deviceMemory: 4 };
+global.Image = class {
+  constructor() { this.complete = true; this.naturalWidth = 640; this.naturalHeight = 480; this.width = 640; this.height = 480; }
+  set src(value) { this._src = value; this.onload?.(); }
+};
+global.window.innerWidth = 1280;
+global.window.innerHeight = 720;
+global.window.devicePixelRatio = 2;
+global.window.addEventListener = () => {};
+global.window.removeEventListener = () => {};
+global.window.matchMedia = () => ({ matches: false });
+global.requestAnimationFrame = () => 1;
+global.cancelAnimationFrame = () => {};
+
+const gradient = { addColorStop() {} };
+const ctx = new Proxy({
+  createLinearGradient() { return gradient; },
+  createRadialGradient() { return gradient; },
+  measureText(value) { return { width: String(value).length * 6 }; },
+  getImageData() { return { data: new Uint8ClampedArray(4) }; }
+}, {
+  get(target, key) { return key in target ? target[key] : () => {}; },
+  set(target, key, value) { target[key] = value; return true; }
+});
+const elements = [];
+global.document.body = { insertBefore(element) { elements.push(element); element.parentNode = this; } };
+global.document.createElement = tag => ({
+  tagName: String(tag).toUpperCase(), width: 0, height: 0, style: {},
+  getContext(type) { return type === '2d' ? ctx : null; },
+  setAttribute() {}, remove() { this.removed = true; }
+});
+const listeners = {};
+const canvas = {
+  width: 0, height: 0, style: {}, nextSibling: null,
+  getContext(type) { return type === '2d' ? ctx : null; },
+  addEventListener(name, fn) { listeners[name] = fn; },
+  setPointerCapture() {},
+  requestPointerLock() { document.pointerLockElement = this; documentListeners.pointerlockchange?.(); },
+  getBoundingClientRect() { return { left: 0, top: 0, width: 1280, height: 720 }; }
+};
+
 for (const file of ['js/data.js', 'js/gallery-art.js', 'js/konami.js', 'js/tech-archive.js', 'js/game.js', 'js/canvas-scene.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), { filename: file });
 }
-const { makeGame } = global.EscapeGame;
-const gradients = [];
-let textureDraws = 0;
-const ctx = new Proxy({
-  transform() {},
-  drawImage() { textureDraws++; },
+const { makeGame, newPlay, answerPuzzle, tryCode, finishFinal, resultFor } = global.EscapeGame;
+const scene = new global.CanvasMuseumScene(canvas, () => {}, () => {});
 
-  createLinearGradient() { const g = { addColorStop() {} }; gradients.push(g); return g; },
-  createRadialGradient() { return { addColorStop() {} }; }
-}, { get(target, key) { return key in target ? target[key] : () => {}; }, set(target, key, value) { target[key] = value; return true; } });
-const listeners = {};
-const overlayElements = [];
-global.document.body = { insertBefore(element) { overlayElements.push(element); element.parentNode = this; } };
-global.document.createElement = tag => ({ tagName: tag.toUpperCase(), width: 0, height: 0, style: {}, getContext(type) { return type === '2d' ? ctx : null; }, setAttribute() {}, remove() { this.removed = true; } });
-const canvas = { width: 0, height: 0, style: {}, nextSibling: null, getContext(type) { return type === '2d' ? ctx : null; }, addEventListener(k, fn) { listeners[k] = fn; }, setPointerCapture() {}, requestPointerLock() { document.pointerLockElement = this; documentListeners.pointerlockchange?.(); }, getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 600 }; } };
-global.window.innerWidth = 960; global.window.innerHeight = 600; global.window.devicePixelRatio = 2;
-global.window.addEventListener = () => {}; global.window.removeEventListener = () => {}; global.window.matchMedia = () => ({ matches: false });
-global.requestAnimationFrame = () => 1; global.cancelAnimationFrame = () => {};
-const hits = [];
-const scene = new global.CanvasMuseumScene(canvas, id => hits.push(id), () => {});
-if (!scene.paintingOverlayCtx || overlayElements.length !== 1) throw new Error('High-resolution gallery painting overlay was not created');
+assert.ok(scene.paintingOverlay && scene.paintingOverlayCtx, 'high-resolution painting overlay should be created');
+assert.ok(scene.effectOverlay && scene.effectOverlayCtx, 'separate transparent ambient-effects overlay should be created');
+assert.ok(scene._ambientInterval <= 1000 / 15, 'ambient effects should be capped at a modest frame rate');
+const galleryAsset = fs.readFileSync(path.join(__dirname, '..', 'assets', 'gallery-photo.png'));
+const embeddedGallery = Buffer.from(global.GALLERY_ART_DATA.split(',')[1], 'base64');
+assert.deepEqual(galleryAsset, embeddedGallery, 'standalone gallery photo must restore the exact embedded original');
+assert.equal(scene.galleryImage._src, global.GALLERY_ART_DATA, 'embedded original gallery image remains the primary texture source');
+assert.ok(scene._drawAmbientEffects && scene._drawClockEffect && scene._drawFanEffect && scene._drawGalleryGlints, 'ambient animation render paths should be available');
+assert.ok(scene.canvas.width * scene.canvas.height <= scene.maxPixels * 1.01, 'main scene backing store should stay within its pixel budget');
+assert.equal(scene.roomScaleX, 1.5, 'museum rooms should use the compact 1.5x footprint scale');
+assert.equal(scene.libraryScaleX, 1.25, 'Library should retain its original scale');
+assert.deepEqual(scene.roomOffsets, [0, 23.5, 47]);
+
 for (const stage of [8, 9]) {
   for (const tier of [0, 1, 2]) {
-    const game = makeGame(stage, tier, 20261106 + stage + tier);
-    scene.setRoom(game, 0); scene.render();
-    if (scene.roomFaceGroups.length !== 4) throw new Error('All three rooms and the optional library should remain resident');
-    if (!scene.roomGeometry.some(face => face.zone === 'connector')) throw new Error('First connector hallway geometry is not present');
-    if (scene.roomOffsets[2] - scene.roomOffsets[0] < 30) throw new Error('The connected world is not larger than a single room');
-    for (let room = 0; room < 3; room++) {
-      if (room > 0) for (let door = 0; door < room; door++) scene.openDoor(door);
-      scene.camera = { x: scene.roomOffsets[room], y: 1.66, z: 5.1875 };
-      scene.setActiveRoom(game, room); scene.render();
-      if (scene.roomGeometry.some(face => face.points.length !== 4)) throw new Error(`Non-quad source geometry found in room ${room}`);
-      if (scene.hotspots.length !== (room === 1 ? 16 : room === 2 ? 17 : 7) || scene.projectedHotspots.length < 3) throw new Error(`Hotspot test failed: ${stage}/${tier}/${room}`);
-      if (!scene.hotspots.some(point => point.id === 'paper-0')) throw new Error('Physical clue paper hotspot is missing');
-      if (room === 1 && (!scene.hotspots.some(point => point.id === 'photo-0') || !scene.hotspots.some(point => point.id === 'gallery-chair-0'))) throw new Error('Gallery photograph or chair hotspot is missing');
-      const offset = scene.roomOffsets[room];
-      const obstacle = room === 0 ? [-3.15, -2.2] : room === 1 ? [0, -2.45] : [0, -2.35];
-      if (scene._canOccupy(offset + obstacle[0] * 1.25, obstacle[1] * 1.25)) throw new Error(`Collision missing: ${stage}/${tier}/${room}`);
-      if (!scene._canOccupy(offset, 5.1875)) throw new Error(`Room spawn point blocked: ${stage}/${tier}/${room}`);
-      const cachedGeometry = scene.roomGeometry;
-      scene.render();
-      if (scene.roomGeometry !== cachedGeometry) throw new Error('Static map geometry was rebuilt during render');
-      scene.setMovement(0.5, 1); scene.setDark(room === 1); scene.setTorch(room === 1); scene.render(); scene.setMovement(0, 0);
+    const game = makeGame(stage, tier, 20261108 + stage * 10 + tier);
+    assert.equal(game.rooms.length, 4, 'Library must be the fourth/final room');
+    for (let roomIndex = 0; roomIndex < 4; roomIndex++) {
+      const room = game.rooms[roomIndex];
+      assert.equal(room.puzzles.length, 5, `${stage}/${tier}/${roomIndex} should have five panels`);
+      assert.equal(room.code.length, 5, `${stage}/${tier}/${roomIndex} should have five lock characters`);
+      if (roomIndex < 3) {
+        assert.ok(room.wordPapers.length >= (room.kind === 'reading' ? 8 : 9), `${stage}/${tier}/${roomIndex} should have an expanded paper search`);
+        assert.ok(room.wordPapers.every(p => p.width === .62 && p.depth === .38), 'main-room word slips should restore the earlier readable dimensions');
+        const positions = new Set(room.wordPapers.map(p => `${p.x}:${p.y}:${p.z}`));
+        assert.equal(positions.size, room.wordPapers.length, 'paper placement positions must not overlap');
+        for (const puzzle of room.puzzles) {
+          assert.ok(room.wordPapers.some(p => String(p.value).toLowerCase() === String(puzzle.answer).toLowerCase()), 'every answer must be recoverable from a paper');
+        }
+      }
     }
+    assert.equal(game.rooms[3].code.join(''), 'STACK', 'Library must have the final archive code');
+
+    const play = newPlay(game, 1000);
+    for (let roomIndex = 0; roomIndex < 4; roomIndex++) {
+      play.room = roomIndex;
+      const room = game.rooms[roomIndex];
+      for (let panelIndex = 0; panelIndex < 5; panelIndex++) {
+        const puzzle = room.puzzles[panelIndex];
+        const foundWord = roomIndex === 3 ? puzzle.answer : room.wordPapers.find(p => String(p.value).toLowerCase() === String(puzzle.answer).toLowerCase())?.value;
+        assert.ok(foundWord, 'panel solution must exist as a found word');
+        assert.equal(answerPuzzle(game, play, panelIndex, foundWord), 'right');
+        assert.ok(play.solved[roomIndex][panelIndex]);
+        assert.equal(puzzle.gives, room.code[panelIndex]);
+      }
+      const result = tryCode(game, play, room.code, 2000 + roomIndex);
+      assert.equal(result.ok, true);
+      assert.equal(result.final, roomIndex === 3, 'only the Library lock should lead to the final scramble');
+    }
+    finishFinal(play, true);
+    assert.equal(play.out, true);
+    assert.equal(resultFor(game, play, 3000).rightFirst, 20, 'all 20 answer panels count in results');
   }
 }
-if (!gradients.length || typeof listeners.pointerdown !== 'function') throw new Error('Canvas renderer initialization failed');
-// The art gallery must contain real textured quads, one for each framed photo.
-const galleryGame = makeGame(9, 0, 1234);
-scene.setRoom(galleryGame, 0);
-scene.openDoor(0); scene.openDoor(1);
-scene.camera = { x: scene.roomOffsets[1], y: 1.66, z: 5.1875 };
-scene.setActiveRoom(galleryGame, 1);
-const photoFaces = scene.roomGeometry.filter(face => face.texture === 'gallery-photo');
-if (photoFaces.length !== 4) throw new Error(`Expected four gallery photo planes, got ${photoFaces.length}`);
-if (scene.hotspots.filter(point => point.id.startsWith('gallery-chair-')).length !== 5) throw new Error('All five gallery chairs must be interactable');
-if (scene.hotspots.filter(point => point.id.startsWith('photo-')).length !== 4) throw new Error('All four gallery photographs must be inspectable');
-if (!scene.roomFaceGroups[0] || !scene.roomGeometry.slice(scene.roomFaceGroups[0].faceStart, scene.roomFaceGroups[0].faceEnd).some(face => face.zone === 'connector')) throw new Error('First connector hallway geometry is missing');
-scene.render();
-if (textureDraws < 4) throw new Error('Gallery image texture was not rendered into all four frames');
-if (scene.paintingOverlay.style.display !== 'block' || scene.paintingOverlay.width <= 0 || scene.paintingOverlay.height <= 0) throw new Error('High-resolution gallery painting overlay was not sized or displayed');
-if (scene.paintingOverlay.width < Math.floor(parseFloat(scene.paintingOverlay.style.width) * 1.8) || scene.paintingOverlay.height < Math.floor(parseFloat(scene.paintingOverlay.style.height) * 1.8)) throw new Error('Gallery overlay should render its visible painting bounds at device pixel ratio');
-const transformMatrices = [];
-let quadTextureDraws = 0, quadClipCalls = 0, quadPathPoints = 0;
-scene._drawTexturedQuad(photoFaces[0], [
-  { x: 10, y: 20 }, { x: 250, y: 20 },
-  { x: 250, y: -220 }, { x: 10, y: -220 }
-], {
-  save() {}, restore() {}, beginPath() {}, moveTo() { quadPathPoints++; },
-  lineTo() { quadPathPoints++; }, closePath() {}, clip() { quadClipCalls++; },
-  transform(...matrix) { transformMatrices.push(matrix); }, drawImage() { quadTextureDraws++; }
-});
-if (transformMatrices.length !== 1 || Math.abs(transformMatrices[0][0] - 1) > 1e-6 || Math.abs(transformMatrices[0][3] - 1) > 1e-6 || Math.abs(transformMatrices[0][4] - 10) > 1e-6 || Math.abs(transformMatrices[0][5] + 220) > 1e-6) throw new Error('Gallery image quad mapping matrix is incorrect');
-if (quadTextureDraws !== 1 || quadClipCalls !== 1 || quadPathPoints !== 4) throw new Error('Gallery artwork must render as one clipped four-sided quad');
-if (!global.GALLERY_ART_DATA?.startsWith('data:image/png;base64,')) throw new Error('Embedded gallery artwork data is missing');
 
-// All rooms remain resident; only fully off-screen/behind-camera faces are culled.
-scene.setRoom(galleryGame, 0);
-if (scene.roomFaceGroups.map(group => group.roomIndex).join(',') !== '0,1,2,3') throw new Error('All rooms and the optional library must be built at run start');
-if (!scene.colliders.some(box => box.minX > 11 && box.minX < 18)) throw new Error('Gallery collision data is not resident at run start');
-if (!scene.colliders.some(box => box.minX > 31 && box.minX < 38)) throw new Error('Storeroom collision data is not resident at run start');
-const residentGeometry = scene.roomGeometry;
-const residentGroups = scene.roomFaceGroups.slice();
-const residentFaceCount = scene.roomGeometry.length;
-const residentFaceIds = scene.roomGeometry.map(face => face.faceId);
-if (scene.libraryLayout.racks.length !== 20) throw new Error('Library must contain 20 bookcases');
-if (scene.libraryLayout.papers.length !== 10) throw new Error('Library must contain ten papers');
-const alternateLibrarySeed = makeGame(9, 0, 8765);
-if (alternateLibrarySeed.librarySeed === galleryGame.librarySeed) throw new Error('Library paper layout seed should vary by run seed');
-if (new Set(scene.libraryLayout.papers.map(paper => `${paper.rackId}:${paper.level}:${paper.col}`)).size !== 10) throw new Error('Library papers must occupy ten distinct cubbies');
-if (scene.libraryLayout.racks.some(rack => !Number.isInteger(rack.row) || !Number.isInteger(rack.col))) throw new Error('Library shelf grid is not indexed into rows and columns');
-if (!scene.roomGeometry.some(face => face.roomIndex === 3 && Number.isInteger(face.libraryNoteIndex))) throw new Error('Library paper geometry is missing');
-if (scene.roomGeometry.filter(face => face.roomIndex === 3 && face.libraryNoteIndex != null).some(face => face.points.length !== 4 || face.points.some(point => Math.abs(point[2] - face.points[0][2]) > 1e-6))) throw new Error('Library papers must be stable front-mounted quads');
-if (scene.roomGeometry.filter(face => face.roomIndex === 3 && face.libraryNoteIndex != null).some(face => face.layer !== 1)) throw new Error('Library papers must depth-sort with the shelf geometry rather than overlay it');
-if (new Set(scene.libraryLayout.papers.map(paper => paper.rackId)).size !== 10) throw new Error('Library papers should be spread across ten different bookcases');
-if (scene.libraryLayout.papers.some(paper => Math.abs(paper.z - (scene.libraryLayout.racks.find(rack => rack.id === paper.rackId).z + .366)) > 1e-6)) throw new Error('Library paper is not attached to the shelf end plane');
-if (!Array.isArray(scene.libraryLayout.books) || scene.libraryLayout.books.length < 250) throw new Error('Library shelves are not sufficiently populated with books');
-if (scene.libraryLayout.books.some(book => book.y < .34 || book.height > .40 || book.zFront > scene.libraryLayout.racks.find(rack => rack.id === book.rackId).z + .36)) throw new Error('A book is outside its shelf compartment');
-if (scene.roomGeometry.filter(face => Number.isInteger(face.libraryBookIndex)).length !== scene.libraryLayout.books.length) throw new Error('Book spine geometry count does not match the generated books');
-if (!scene.roomGeometry.some(face => scene.libraryLayout.books.some(book => face.libraryBookIndex === book.id))) throw new Error('Book spine geometry is missing');
-if (scene.roomScaleX <= 1 || scene.roomScaleZ <= 1) throw new Error('Museum rooms were not enlarged');
-scene.camera = { x: 0, y: 1.66, z: 0 }; scene.yaw = -Math.PI / 2;
-scene.render();
-if (!scene._frameFaces.some(face => face.doorBarrier === 0)) throw new Error('Closed door panel was not drawn');
-scene.openDoor(0);
-if (scene.roomGeometry !== residentGeometry || scene.roomGeometry.length !== residentFaceCount || scene.roomFaceGroups.some((group, i) => group !== residentGroups[i])) throw new Error('Unlocking a door changed resident room geometry');
-if (scene.roomGeometry.some((face, i) => face.faceId !== residentFaceIds[i])) throw new Error('Unlocking a door changed stable face identifiers');
-scene.render();
-if (scene._frameFaces.some(face => face.doorBarrier === 0)) throw new Error('Opened door panel was not removed from the rendered scene');
-if (scene._frameFaces.some(face => face.lockBarrier === 0)) throw new Error('Unlocked keypad/buttons were not removed from the rendered scene');
-scene.setActiveRoom(galleryGame, 0);
-if (scene.hotspots.some(point => point.id === 'lock')) throw new Error('Unlocked room still exposes its lock interaction hotspot');
-scene.setActiveRoom(galleryGame, 1);
-scene.camera = { x: 20, y: 1.66, z: 5.1875 }; scene.render();
-if (!scene.roomGeometry.some(face => face.lockBarrier === 1)) throw new Error('Gallery lock geometry was not built');
-scene.openDoor(1); scene.render();
-if (scene._frameFaces.some(face => face.lockBarrier === 1 || face.doorBarrier === 1)) throw new Error('Gallery door lock/panel remained after unlock');
-scene.setActiveRoom(galleryGame, 2);
-scene.camera = { x: 40, y: 1.66, z: 5.1875 }; scene.yaw = -Math.PI / 2; scene.render();
-if (!scene._frameFaces.some(face => face.lockBarrier === 'exit')) throw new Error('Final exit lock was not present before opening');
-scene.openExit(); scene.render();
-if (scene._frameFaces.some(face => face.lockBarrier === 'exit' || face.doorBarrier === 'exit')) throw new Error('Final exit lock/panel remained after opening');
-const geometryBeforeLighting = scene.roomGeometry;
-scene.setDark(true); scene.render();
-if (scene.roomGeometry !== geometryBeforeLighting) throw new Error('Lighting toggle rebuilt static object geometry');
-scene.setDark(false);
-if (scene.roomFaceGroups.length !== 4) throw new Error('Door unlocking altered the resident world group count');
-scene.render();
-if (scene._drawPrimitives.length !== scene._frameFaces.length) throw new Error('Each visible surface should produce exactly one intact polygon draw call');
-if (scene._drawPrimitives.some(item => item.points.length === 3)) throw new Error('A surface was unnecessarily split into triangle draw primitives');
-
-// Visibility is face-level only. Geometry from other rooms stays resident and
-// can render when it is in the camera frustum; out-of-frame faces are discarded.
-scene.camera = { x: 0, y: 1.66, z: 5.1875 }; scene.yaw = 0; scene.render();
-if (scene._frameFaces.some(face => face.roomIndex === 0) === false) throw new Error('Ticket hall geometry was not rendered from its own room');
-scene.camera = { x: 20, y: 1.66, z: 5.1875 }; scene.yaw = 0; scene.render();
-if (scene._frameFaces.some(face => face.roomIndex === 1) === false) throw new Error('Gallery geometry was not rendered from its own room');
-scene.camera = { x: 40, y: 1.66, z: 5.1875 }; scene.yaw = 0; scene.render();
-if (scene._frameFaces.some(face => face.roomIndex === 2) === false) throw new Error('Storeroom geometry was not rendered from its own room');
-
-// Gallery chairs have their backrests on +Z and face the tables on -Z.
-const galleryBackrests = scene.roomGeometry.filter(face => face.roomIndex === 1 && face.objectTag === 'chair-back');
-if (galleryBackrests.length < 5) throw new Error('Gallery chair backrests were not tagged/built');
-for (const face of galleryBackrests) if (face.cz < 1.375) throw new Error(`Gallery chair backrest is on the table-facing side: ${face.cz}`);
-
-// Exactly one raised quad per paper clue; no coplanar print polygons remain.
-for (const roomIndex of [0, 1, 2]) {
-  const papers = scene.roomGeometry.filter(face => face.roomIndex === roomIndex && Number.isInteger(face.paperIndex));
-  if (papers.length !== 3) throw new Error(`Room ${roomIndex} should contain three paper quads`);
-  if (papers.some(face => face.points.length !== 4)) throw new Error('Clue paper is not a single quad');
+const game = makeGame(9, 1, 881122);
+scene.setRoom(game, 0);
+assert.equal(scene.roomFaceGroups.length, 4, 'all rooms remain resident');
+assert.ok(scene.roomGeometry.every(face => face.points.length === 4), 'scene geometry should use intact quads');
+assert.ok(scene.roomGeometry.some(face => face.roomIndex === 3 && face.libraryNoteIndex != null), 'Library paper geometry should be present');
+// Closed room exit doors must fill the visible portal so the player cannot
+// slip around either side of a door panel.
+for (let doorIndex = 0; doorIndex < 2; doorIndex++) {
+  const doorX = scene.roomOffsets[doorIndex] + 7 * 1.5;
+  const barrier = scene.colliders.find(box => Math.abs((box.minX + box.maxX) / 2 - doorX) < .02 && Math.abs((box.minZ + box.maxZ) / 2) < .02 && box.height < 4);
+  assert.ok(barrier, `room ${doorIndex} should have a closed exit-door barrier`);
+  assert.ok(barrier.maxZ - barrier.minZ >= 4.8, `room ${doorIndex} exit barrier should span the full doorway`);
+  assert.ok(!scene._canOccupy(doorX, 2.0), `room ${doorIndex} player must not pass beside the closed exit door`);
 }
-let paperLabelsDrawn = 0;
-const originalFillText = ctx.fillText;
-ctx.fillText = function (value, ...args) { if (/^(?:CLUE|CODE)\s/.test(String(value))) paperLabelsDrawn++; };
-scene.camera = { x: 0, y: 1.66, z: 5.1875 }; scene.yaw = 0; scene.render();
-ctx.fillText = originalFillText;
-if (paperLabelsDrawn < 1) throw new Error('Raised clue-paper face did not draw its printed label');
+assert.equal(scene.libraryLayout.racks.length, 20);
+assert.equal(scene.libraryLayout.papers.length, 10);
+assert.ok(scene.libraryLayout.papers.every(p => p.width >= .24 && p.width < .30 && p.height >= .26 && p.height < .31), 'Library papers should restore their earlier readable dimensions');
+assert.ok(scene.libraryLayout.books.length >= 250);
 
-// Culling is conservative: only fully off-screen faces are rejected; reversed winding stays visible.
-scene.camera = { x: 0, y: 1.66, z: 5.1875 }; scene.yaw = 0;
-scene._prepareVertexTransforms(scene._getLoadedRoomGroups());
-const reversedFace = { ...scene.roomGeometry[0], points: [...scene.roomGeometry[0].points].reverse(), indices: [...scene.roomGeometry[0].indices].reverse(), _framePoints: [] };
-if (!scene._projectFace(reversedFace)) throw new Error('A face was removed based on winding');
-const offscreenPoints = [[100, 0, -10], [101, 0, -10], [100, 1, -10]];
-const offscreenIndices = offscreenPoints.map(point => { const index = scene._vertices.length; scene._vertices.push(point); return index; });
-scene._syncGeometryBuffers();
-scene._prepareVertexTransforms();
-const farOffscreenFace = { points: offscreenPoints, indices: offscreenIndices, _framePoints: [], layer: 0, fill: '#fff' };
-if (scene._projectFace(farOffscreenFace)) throw new Error('A fully off-screen face was not culled');
-const partiallyVisiblePoints = [[-20, 0, -10], [20, 0, -10], [20, 1, -10], [-20, 1, -10]];
-const partiallyVisibleIndices = partiallyVisiblePoints.map(point => { const index = scene._vertices.length; scene._vertices.push(point); return index; });
-scene._syncGeometryBuffers();
-scene._prepareVertexTransforms();
-const partiallyVisibleFace = { points: partiallyVisiblePoints, indices: partiallyVisibleIndices, _framePoints: [], layer: 0, fill: '#fff' };
-if (!scene._projectFace(partiallyVisibleFace)) throw new Error('A partially visible face was incorrectly culled');
-const behindFace = { ...scene.roomGeometry[0], points: [[0,0,100],[1,0,100],[0,1,100]], indices: [0,1,2], _framePoints: [] };
-// Near-plane clipping may yield no drawable polygon when it is entirely behind the camera.
-if (scene._projectFace(behindFace)) throw new Error('Near-plane clipping should reject polygons entirely behind the camera');
-// Cardinal headings should continue to produce drawable geometry with conservative screen-bound culling.
-for (const cameraX of [0, 8, 16, 24, 32]) for (const yaw of [0, Math.PI/2, -Math.PI/2, Math.PI]) {
-  scene.camera = { x: cameraX, y: 1.66, z: 0 }; scene.yaw = yaw;
-  scene._prepareVertexTransforms(scene._getLoadedRoomGroups());
-  scene.render();
-  if (!scene._frameFaces.length) throw new Error(`No room faces rendered at x=${cameraX}, yaw=${yaw}`);
-}
-scene.camera = { x: scene.roomOffsets[1], y: 1.66, z: 5.1875 };
-scene.setActiveRoom(galleryGame, 1);
-scene.yaw = 0;
-scene.render();
-const priorPosition = { ...scene.camera };
-scene.setActiveRoom(galleryGame, 2);
-if (scene.camera.x !== priorPosition.x || scene.camera.z !== priorPosition.z) throw new Error('Changing active room teleported the player');
-scene.setActiveRoom(galleryGame, 1);
-
-// Door remains solid until its code is solved, then the same coordinate is walkable.
-scene.setRoom(galleryGame, 0);
-scene.camera = { x: 8.06, y: 1.66, z: 0 };
-if (scene._canOccupy(8.75, 0)) throw new Error('Closed connector door did not block movement');
-scene.openDoor(0);
-if (!scene._canOccupy(8.75, 0)) throw new Error('Unlocked connector door remained blocked');
-scene.camera = { x: 8.0, y: 1.66, z: 0 };
-scene.yaw = -Math.PI/2;
-scene.setMovement(0, 1);
-if (!scene._move(.5) || scene.camera.x <= 8.75) throw new Error('Player could not walk through the unlocked doorway');
-scene.setMovement(0, 0);
-scene.camera = { x: 28.06, y: 1.66, z: 0 };
-if (scene._canOccupy(28.75, 0)) throw new Error('Second connector door should block before unlock');
-scene.openDoor(1);
-if (!scene._canOccupy(28.75, 0)) throw new Error('Second connector door stayed blocked after unlock');
-scene.camera = { x: 28.0, y: 1.66, z: 0 }; scene.yaw = -Math.PI/2; scene.setMovement(0, 1);
-if (!scene._move(.5) || scene.camera.x <= 28.75) throw new Error('Player could not walk through the second connector');
-scene.setMovement(0, 0);
-
-// The optional library is a walkable side room behind the storeroom.
-scene.setRoom(galleryGame, 2);
-scene.camera = { x: 40, y: 1.66, z: -6.0 }; scene.yaw = 0;
-if (scene.isInLibrary()) throw new Error('Library area was detected before crossing its threshold');
-scene.setMovement(0, 1);
-for (let i = 0; i < 115; i++) scene._move(1/30);
-scene.setMovement(0, 0);
-if (!scene.isInLibrary()) throw new Error('Player could not physically enter the library connector');
-if (scene.hotspots.filter(point => point.libraryNote).length !== 10) throw new Error('All ten library notes must be available to inspect');
-
-// Chair interaction, standing, and a high enough jump to clear normal desks.
-scene.setRoom(galleryGame, 0);
-scene.camera = { x: -5.05 * 1.25, y: 1.66, z: 2.8 * 1.25 };
-if (!scene.sitOnChair(0) || !scene.seated) throw new Error('Chair interaction failed');
-if (scene.camera.y < 1.38) throw new Error('Sitting camera height was not raised');
-if (!scene.jump() || scene.seated) throw new Error('Space/jump did not stand the player up');
-scene.jump();
-if (!(scene.jumpVelocity > 0)) throw new Error('Jump did not apply upward velocity');
-let jumpPeak = 0;
-for (let i = 0; i < 90 && (scene.jumpVelocity !== 0 || scene.jumpHeight > 0); i++) {
-  scene._stepJump(1/60);
-  jumpPeak = Math.max(jumpPeak, scene.jumpHeight);
-}
-if (jumpPeak < 1.95) throw new Error(`Jump arc too low to clear medium furniture (${jumpPeak.toFixed(2)}m)`);
-scene.jumpHeight = jumpPeak;
-if (!scene._canOccupy(0, -2.15 * 1.25)) throw new Error('Jumping cannot clear the medium-height table collision');
-scene.jumpHeight = 0;
-scene.camera = { x: 0, y: 1.66, z: -1.7 }; scene.yaw = 0; scene.jump(); scene.setMovement(0, 1);
-for (let i = 0; i < 100 && (scene.jumpVelocity !== 0 || scene.jumpHeight > 0); i++) { scene._stepJump(1/60); scene._move(1/60); }
-scene.setMovement(0, 0);
-if (scene.camera.z > -3.72) throw new Error(`Jump could not physically clear the display table (stopped at z=${scene.camera.z.toFixed(2)})`);
-scene.jumpHeight = 0; scene.jumpVelocity = 0; scene.camera.y = scene.eyeHeight; scene.camera = { x: scene.roomOffsets[1], y: 1.66, z: 2.0 }; scene.roomIndex = 1; scene.yaw = 0;
-if (!scene.sitOnGalleryChair(2) || !scene.seated) throw new Error('Gallery chair seating failed');
-if (scene.camera.y < 1.38) throw new Error('Gallery seated camera height was not raised');
-scene.standUp();
-for (let i = 0; i < 5; i++) {
-  const positions = [-5,-2.5,0,2.5,5];
-  scene.camera = { x: scene.roomOffsets[1] + positions[i] * 1.25, y: 1.66, z: 1.1 * 1.25 };
-  if (!scene.sitOnGalleryChair(i) || !scene.seated) throw new Error(`Gallery chair ${i} could not be used`);
-  scene.standUp();
+// Five physical answer panels and more papers in every main room.
+for (let roomIndex = 0; roomIndex < 3; roomIndex++) {
+  scene.camera = { x: scene.roomOffsets[roomIndex], y: 1.66, z: 5.1875 * 1.25 };
+  scene.setActiveRoom(game, roomIndex);
+  assert.equal(scene.hotspots.filter(p => /^answer-panel-\d+$/.test(p.id)).length, 5);
+  assert.equal(scene.roomGeometry.filter(f => f.roomIndex === roomIndex && Number.isInteger(f.answerPanelIndex)).length, 5);
+  assert.equal(scene.roomGeometry.filter(f => f.roomIndex === roomIndex && Number.isInteger(f.wordPaperIndex)).length, game.rooms[roomIndex].wordPapers.length, 'all generated room papers should have matching world geometry');
 }
 
-// The Konami matcher should accept the full sequence and re-arm after activation.
-let cheatActivations = 0;
-const matchKonami = global.createKonamiMatcher(() => cheatActivations++);
-for (const key of ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b']) {
-  if (matchKonami(key)) throw new Error('Konami code activated before the final A key');
+// The Ticket Hall is deliberately denser: seven added tables and twelve added
+// drawers are present only in this room. Filled and empty trays are mixed.
+scene.setRoom(game, 0);
+// Loose papers must sit fully inside the real tabletop/shelf footprint and at
+// its actual top height. This catches stale map coordinates that leave papers
+// floating beside furniture or embedded below desk surfaces.
+const paperSurfaces = [
+  [
+    {x:-3.15,z:-2.2,w:2.45,d:1.25,y:1.55},
+    {x:0,z:-2.15,w:1.45,d:1.2,y:1.20},
+    {x:3.12,z:-2.17,w:2.45,d:1.2,y:1.35},
+    {x:-5,z:1.45,w:2.2,d:.6,y:.62},
+    {x:-4.25,z:-.15,w:1.9,d:1.15,y:.885},
+    {x:-.10,z:3.15,w:2.05,d:1.2,y:.905},
+    {x:4.25,z:-.10,w:1.85,d:1.15,y:.885},
+    {x:-5,z:-4.1,w:1.9,d:1,y:.865},
+    {x:5,z:-4.1,w:1.9,d:1,y:.865},
+    {x:-2.15,z:-4.8,w:1.8,d:1.05,y:.865},
+    {x:2.15,z:-4.8,w:1.8,d:1.05,y:.865}
+  ],
+  [{x:0,z:-2.45,w:6.5,d:1,y:.82}],
+  [
+    {x:-3.7,z:-2.45,w:2.7,d:1.3,y:2.15},
+    {x:0,z:-2.35,w:1.8,d:1.5,y:1.1},
+    {x:1.9,z:.25,w:1.25,d:1.1,y:.95},
+    ...[-5.7,5.7].flatMap(x => [.88,1.78,2.68].map(y => ({x,z:-1,w:1.05,d:1.2,y}))),
+    {x:-3,z:3.65,w:2.2,d:1.1,y:.865},
+    {x:3,z:3.65,w:2.2,d:1.1,y:.865}
+  ]
+];
+const isOnSurface = (paper, surfaces) => surfaces.some(surface =>
+  Math.abs(paper.y - surface.y) < .002 &&
+  Math.abs(paper.x - surface.x) <= (surface.w - paper.width) / 2 + .002 &&
+  Math.abs(paper.z - surface.z) <= (surface.d - paper.depth) / 2 + .002);
+for (let roomIndex = 0; roomIndex < 3; roomIndex++) {
+  scene.setActiveRoom(game, roomIndex);
+  const loose = game.rooms[roomIndex].wordPapers.filter(paper => !paper.drawerId);
+  assert.ok(loose.length > 0, `room ${roomIndex} should retain loose searchable papers`);
+  for (const paper of loose) {
+    assert.ok(isOnSurface(paper, paperSurfaces[roomIndex]), `room ${roomIndex} paper ${paper.id} must sit on a real surface`);
+    const face = scene.roomGeometry.find(item => item.roomIndex === roomIndex && item.wordPaperIndex === paper.id);
+    const hotspot = scene.hotspots.find(item => item.id === `word-paper-${paper.id}`);
+    assert.ok(face && hotspot, `room ${roomIndex} paper ${paper.id} must have geometry and a pickup target`);
+    const centerX = face.points.reduce((sum, point) => sum + point[0], 0) / face.points.length;
+    const centerZ = face.points.reduce((sum, point) => sum + point[2], 0) / face.points.length;
+    assert.ok(Math.abs(hotspot.x - centerX) < .01 && Math.abs(hotspot.z - centerZ) < .01,
+      `room ${roomIndex} paper ${paper.id} pickup target must match its rendered position`);
+  }
 }
-if (!matchKonami('a') || cheatActivations !== 1) throw new Error('Konami code did not activate the testing menu callback');
-for (const key of global.KONAMI_SEQUENCE) matchKonami(key);
-if (cheatActivations !== 2) throw new Error('Konami matcher did not re-arm after a successful sequence');
+scene.setActiveRoom(game, 0);
+assert.equal(scene.extraTicketHallTables.length, 7, 'Ticket Hall should have seven additional tables');
+const ticketDrawers = scene.drawers.filter(drawer => drawer.roomIndex === 0);
+assert.equal(ticketDrawers.length, 14, 'Ticket Hall should have fourteen drawers in total');
+assert.equal(ticketDrawers.filter(drawer => drawer.paperIds.length === 0).length, 8, 'Ticket Hall should include eight intentionally empty drawers');
+assert.ok(ticketDrawers.some(drawer => drawer.paperIds.includes(4) && drawer.paperIds.includes(5)), 'one added drawer should hide papers 5 and 6');
+assert.ok(ticketDrawers.some(drawer => drawer.paperIds.includes(6) && drawer.paperIds.includes(7)), 'another added drawer should hide papers 7 and 8');
+assert.ok(ticketDrawers.some(drawer => drawer.paperIds.includes(8) && drawer.paperIds.includes(9)), 'rear side desk drawer should hide papers 9 and 10');
+assert.ok(ticketDrawers.some(drawer => drawer.paperIds.includes(10)), 'one new archive drawer should contain an additional word slip');
+assert.ok(!ticketDrawers.some(drawer => drawer.paperIds.includes(11)), 'the final word slip should remain loose on a desk for collection');
+assert.ok(ticketDrawers.every(drawer => drawer.faces.length >= 5), 'all Ticket Hall drawers should have complete moving geometry');
+for (const table of scene.extraTicketHallTables) {
+  const cx = table.x * 1.25, cz = table.z * 1.25;
+  assert.ok(scene.colliders.some(c => Math.abs((c.minX + c.maxX) * .5 - cx) < .01 && Math.abs((c.minZ + c.maxZ) * .5 - cz) < .01), `${table.id} should have a matching collision/platform footprint`);
+}
+scene.camera = { x: 0, y: scene.eyeHeight, z: 5.1875 * 1.25 }; scene.yaw = 0;
+scene.setActiveRoom(game, 0);
+assert.ok(!scene.hotspots.some(p => p.id === 'word-paper-4'), 'papers inside a closed added drawer should remain hidden');
+scene.toggleDrawer('drawer-0-2');
+assert.ok(scene.hotspots.some(p => p.id === 'word-paper-4'), 'opening a paper-filled added drawer should reveal its first paper');
+scene.toggleDrawer('drawer-0-2');
+assert.ok(!scene.hotspots.some(p => p.id === 'word-paper-4'), 'closing an added drawer should hide its paper again');
 
-const stage9Tech = makeGame(9, 2, 987654);
-if (!stage9Tech.rooms[0].key.prompt.includes('TECHNOLOGY ARCHIVE')) throw new Error('Stage 9 technology vocabulary archive key was not added');
-if (!global.ESCAPE_TECH_ARCHIVE.relatedVocabulary.some(item => item.w === 'problem-solving')) throw new Error('Coding-related ESL vocabulary item is missing');
-if (!stage9Tech.rooms[1].key.prompt.includes('DEVELOPER ARCHIVE')) throw new Error('Stage 9 project-language archive key was not added');
-if (!stage9Tech.rooms[2].key.prompt.includes('TECHNOLOGY ARCHIVE')) throw new Error('Stage 9 technology grammar archive key was not added');
-const stage8Keys = makeGame(8, 2, 987654);
-if (stage8Keys.rooms.some(room => /ARCHIVE/.test(room.key.prompt))) throw new Error('Stage 8 content should remain unchanged');
+// The Storeroom must have its own visible, unlockable exit and its answer
+// panels must be physically inside the Storeroom, opposite the Library portal.
+scene.setRoom(game, 2);
+scene.doorOpen = [true, true, false];
+scene.libraryDoorOpen = false;
+scene._buildColliders();
+scene.setActiveRoom(game, 2);
+const storeroomLock = scene.hotspots.find(point => point.id === 'lock');
+assert.ok(storeroomLock, 'Storeroom should expose its own exit-lock hotspot');
+assert.match(storeroomLock.label, /Storeroom exit/i, 'Storeroom lock should be named as the Storeroom exit');
+assert.ok(storeroomLock.x > scene.roomOffsets[2] + 2, 'Storeroom keypad should be mounted on the right door jamb, outside the opening');
+const storeroomDoorFace = scene.roomGeometry.find(face => face.roomIndex === 2 && face.doorBarrier === 'library');
+assert.ok(storeroomDoorFace, 'closed Storeroom-to-Library door leaf must be visible in Storeroom geometry');
+const storeroomKeypadFace = scene.roomGeometry.find(face => face.roomIndex === 2 && face.lockBarrier === 'library');
+assert.ok(storeroomKeypadFace && storeroomKeypadFace.cx > scene.roomOffsets[2] + 2, 'Storeroom keypad geometry must sit beside its door, not over the doorway');
+const storeroomPanelFaces = scene.roomGeometry.filter(face => face.roomIndex === 2 && Number.isInteger(face.answerPanelIndex));
+const storeroomPanelHotspots = scene.hotspots.filter(point => /^answer-panel-\d$/.test(point.id));
+assert.equal(storeroomPanelFaces.length, 5, 'Storeroom should have five room-local answer panels');
+assert.equal(storeroomPanelHotspots.length, 5, 'Storeroom should have five room-local answer panel hotspots');
+assert.ok(storeroomPanelFaces.every(face => face.cz > 8), 'Storeroom answer panels must be mounted on the Storeroom front wall, not the Library connector wall');
+assert.ok(storeroomPanelFaces.every(face => face.nz < 0), 'Storeroom front-wall panels must face into the Storeroom');
+for (const face of storeroomPanelFaces) {
+  const hotspot = storeroomPanelHotspots.find(point => point.id === `answer-panel-${face.answerPanelIndex}`);
+  assert.ok(hotspot && Math.abs(hotspot.x - face.cx) < .01 && Math.abs(hotspot.z - face.cz) < .01,
+    `Storeroom panel ${face.answerPanelIndex} hotspot must align with its rendered face`);
+}
+assert.ok(!scene.roomGeometry.some(face => face.roomIndex === 2 && Math.abs(face.cx - scene.roomOffsets[2]) < 1.3 && face.cz > -8.9 && face.cz < -8.1 && face.layer === 1 && face.doorBarrier !== 'library'),
+  'no decorative rear-wall slab should cover the real Storeroom exit');
 
-if (!scene.roomGeometry.length) throw new Error('Room geometry was not cached');
-if (!scene._vertices.length || scene._camForward.length !== scene._vertices.length) throw new Error('Shared vertex transform cache was not allocated');
-if (!scene._shellFaces.length || !scene._propFaces.length || scene.roomFaceGroups.length !== 4) throw new Error('Continuous museum and library geometry groups are missing');
-if (!(scene.maxPixels > 0) || !(scene.activeRenderScale > 0 && scene.activeRenderScale < 1)) throw new Error('Low-resolution scene backing scale was not enabled within the pixel budget');
-scene._dirty = false; scene.setPaperState(scene.paperCodes, scene.paperSolved);
-if (scene._dirty) throw new Error('Unchanged clue paper state caused a redundant render');
-if (scene._canOccupy(0, -2.15)) throw new Error('Furniture collision is missing');
-if (!scene._canOccupy(0, 0)) throw new Error('Walkable floor was incorrectly blocked');
-scene.camera = { x: 0, y: 1.66, z: 5.1875 }; scene.setMovement(0, 1); scene._move(3);
-if (scene.camera.z < -1.75) throw new Error('Player moved through a solid table');
-scene.setMovement(0, 0);
-scene.camera = { x: 0, y: 1.66, z: 5.1875 };
+// The Library is a final progression area after the Storeroom's third lock.
+scene.openDoor(0); scene.openDoor(1); scene.openDoor(2);
+scene.camera = { x: scene.roomOffsets[2], y: 1.66, z: -22.8 };
+scene.setActiveRoom(game, 3);
+assert.ok(scene.isInLibrary());
+assert.ok(scene.hotspots.filter(p => p.libraryNote).every(p => p.discoverRange === 5.4), 'Library notes should restore their earlier interaction range');
+assert.equal(scene.hotspots.filter(p => p.id.startsWith('library-answer-panel-')).length, 5);
+assert.ok(scene.hotspots.some(p => p.id === 'lock'), 'final archive exit lock should be present');
+assert.equal(scene.hotspots.filter(p => p.libraryNote).length, scene.libraryLayout.papers.filter(p => !p.drawerId).length);
+
+// Restore the original camera framing and retain 1.5x movement speed (2.7 to 4.05).
+scene.width = 1280; scene.height = 720;
+const projection = scene._projectCamera({ forward: 10, lateral: 0, vertical: 0 });
+assert.ok(Math.abs(projection.scale - (720 * 0.90 / 10)) < 1e-6, 'projection focal length should match the original pre-120 framing');
+const restoredHorizontalFov = 2 * Math.atan(scene.width / (2 * 720 * 0.90)) * 180 / Math.PI;
+assert.ok(restoredHorizontalFov > 88 && restoredHorizontalFov < 92, 'horizontal FOV should return to the original approximately 90-degree framing');
+const sourceForProjection = fs.readFileSync(path.join(__dirname, '..', 'js', 'canvas-scene.js'), 'utf8');
+assert.ok((sourceForProjection.match(/const focal = this\.height \* 0\.90/g) || []).length >= 2, 'both projection passes should use the restored original FOV');
+assert.ok(!sourceForProjection.includes('0.28867513459481287'), '120-degree FOV must be removed');
+scene.setRoom(game, 0);
+assert.ok(Math.abs(scene.camera.z - 5.1875 * 1.25) < 1e-6, 'spawn should stay near the original object layout inside the enlarged room');
+const mainFloor = scene.roomGeometry.find(face => face.roomIndex === 0 && face.layer === -1 && face.points.length === 4);
+assert.ok(mainFloor, 'main room floor should exist');
+const floorWidth = Math.max(...mainFloor.points.map(point => point[0])) - Math.min(...mainFloor.points.map(point => point[0]));
+assert.ok(Math.abs(floorWidth - 21.0) < 1e-6, 'main room width should be compacted to 1.5x the original shell width');
+const mainFloorDepth = Math.max(...mainFloor.points.map(point => point[2])) - Math.min(...mainFloor.points.map(point => point[2]));
+assert.ok(Math.abs(mainFloorDepth - 18.0) < 1e-6, 'main room depth should be compacted with its width');
+assert.ok(Math.abs(scene.roomOffsets[1] - scene.roomOffsets[0] - floorWidth - 2.5) < 1e-6, 'adjacent room shells should be separated by a short connector');
+assert.ok(Math.abs((2.2 - 12 * 1.25) - (-6 * 1.5) - (-3.8)) < 1e-6, 'Storeroom-to-Library corridor should retain a walkable connector after compacting the room');
+// Room footprints grow, but furniture remains at the earlier physical dimensions.
+const savedGeometry = scene._geometry, savedVertices = scene._vertices, savedVertexMap = scene._vertexMap, savedFaceId = scene._nextFaceId;
+scene._geometry = []; scene._vertices = []; scene._vertexMap = new Map(); scene._nextFaceId = 0;
+scene._box(2, 0, -1, 2, 1, 2, '#776655');
+const boxPoints = scene._geometry.flatMap(face => face.points);
+const boxWidth = Math.max(...boxPoints.map(point => point[0])) - Math.min(...boxPoints.map(point => point[0]));
+const boxDepth = Math.max(...boxPoints.map(point => point[2])) - Math.min(...boxPoints.map(point => point[2]));
+const boxCenterX = (Math.max(...boxPoints.map(point => point[0])) + Math.min(...boxPoints.map(point => point[0]))) / 2;
+const boxCenterZ = (Math.max(...boxPoints.map(point => point[2])) + Math.min(...boxPoints.map(point => point[2]))) / 2;
+assert.ok(Math.abs(boxWidth - 2.5) < 1e-6 && Math.abs(boxDepth - 2.5) < 1e-6, 'a 2x2 prop should remain 2.5x2.5 world units, not grow with the room');
+assert.ok(Math.abs(boxCenterX - 2.5) < 1e-6 && Math.abs(boxCenterZ + 1.25) < 1e-6, 'prop centers should retain their previous object-space positions while room boundaries expand');
+// Wall-mounted elements opt into the large room transform while their dimensions stay fixed.
+scene._geometry = []; scene._vertices = []; scene._vertexMap = new Map(); scene._nextFaceId = 0;
+scene._roomBox(2, 0, -5, 2, 1, .2, '#776655');
+const wallBoxPoints = scene._geometry.flatMap(face => face.points);
+const wallCenterX = (Math.max(...wallBoxPoints.map(point => point[0])) + Math.min(...wallBoxPoints.map(point => point[0]))) / 2;
+const wallCenterZ = (Math.max(...wallBoxPoints.map(point => point[2])) + Math.min(...wallBoxPoints.map(point => point[2]))) / 2;
+assert.ok(Math.abs(wallCenterX - 3.0) < 1e-6 && Math.abs(wallCenterZ + 7.5) < 1e-6, 'room-anchored fixtures should stay attached to compacted walls');
+scene._geometry = savedGeometry; scene._vertices = savedVertices; scene._vertexMap = savedVertexMap; scene._nextFaceId = savedFaceId;
+const savedColliders = scene.colliders;
+scene.colliders = [];
+scene._addCollider(2, -1, 2, 2, 1.2, true);
+const propCollider = scene.colliders[0];
+assert.ok(Math.abs((propCollider.maxX - propCollider.minX) - 2.5) < 1e-6, 'prop collision width must remain at original scale');
+assert.ok(Math.abs((propCollider.maxZ - propCollider.minZ) - 2.5) < 1e-6, 'prop collision depth must remain at original scale');
+scene.colliders = savedColliders;
+scene.camera = { x: 0, y: scene.eyeHeight, z: 10.0 };
 scene.yaw = 0;
 scene.setMovement(0, 1);
-const forwardStart = scene.camera.z;
-if (!scene._move(0.1) || scene.camera.z >= forwardStart) throw new Error('W / ArrowUp must move forward');
+const beforeZ = scene.camera.z;
+scene._move(0.1);
 scene.setMovement(0, 0);
+assert.ok(Math.abs((beforeZ - scene.camera.z) - 0.405) < 0.01, 'movement speed should be 4.05 world units per second');
 
-// A held direction that is fully blocked must not keep scheduling animation frames.
-const oldRaf = global.requestAnimationFrame;
-let blockedRafCount = 0;
-global.requestAnimationFrame = () => { blockedRafCount++; return blockedRafCount; };
-scene._raf = null;
-scene._dirty = false;
-scene.moveInput = { x: 0, y: 1 };
-const originalMove = scene._move;
-scene._move = () => false;
-scene._loop(5000);
-if (blockedRafCount !== 0) throw new Error('Blocked movement kept the animation loop alive');
-scene._move = originalMove;
-scene.moveInput = { x: 0, y: 0 };
-scene.lastTime = 0;
-global.requestAnimationFrame = oldRaf;
-scene.setRoom(galleryGame, 0); scene.camera = { x: 0, y: 1.66, z: 4.75 }; scene.yaw = 0; scene.render();
-const target = scene.projectedHotspots.find(point => point.id === 'paper-0');
-if (!target) throw new Error('Puzzle hotspot was not projected');
-const pointer = { button: 0, pointerType: 'mouse', pointerId: 1, clientX: target.x, clientY: target.y };
-listeners.pointerdown(pointer); listeners.pointerup(pointer);
-if (!hits.includes('paper-0')) throw new Error('Tap-to-interact hotspot test failed');
-scene.setPointerLockEnabled(true);
-listeners.pointerdown({ button: 0, pointerType: 'mouse', pointerId: 2, clientX: 480, clientY: 300 });
-if (!scene.pointerLocked) throw new Error('Pointer lock was not enabled from a canvas click');
-const beforeYaw = scene.yaw;
-listeners.pointermove({ pointerType: 'mouse', movementX: 40, movementY: 10 });
-if (scene.yaw === beforeYaw) throw new Error('Locked mouse movement did not rotate the camera');
-listeners.pointerup({ button: 0, pointerType: 'mouse', pointerId: 2, clientX: 480, clientY: 300 });
-if (hits.length !== 1) throw new Error('The initial pointer-lock click should not activate a hotspot');
-// Pitch sign and sensitivity: upward mouse motion must look upward (horizon moves down).
-scene.camera = { x: 0, y: 1.66, z: 5.1875 };
+// Room-aware culling: active room props stay visible; adjacent room props do not.
+scene.camera = { x: 0, y: scene.eyeHeight, z: 6.484375 }; scene.yaw = 0;
+scene.setActiveRoom(game, 0);
+assert.ok(scene.hotspots.some(p => p.wordPaper && p.discoverRange === 7.5), 'main word slips should restore their earlier interaction range');
+// Every loose paper's world face and interaction target must share one position.
+for (const paper of game.rooms[0].wordPapers.filter(item => !item.drawerId)) {
+  const face = scene.roomGeometry.find(item => item.roomIndex === 0 && item.wordPaperIndex === paper.id);
+  const hotspot = scene.hotspots.find(item => item.id === `word-paper-${paper.id}`);
+  if (!face || !hotspot) continue;
+  const centerX = face.points.reduce((sum, point) => sum + point[0], 0) / face.points.length;
+  const centerZ = face.points.reduce((sum, point) => sum + point[2], 0) / face.points.length;
+  assert.ok(Math.abs(hotspot.x - centerX) < .01 && Math.abs(hotspot.z - centerZ) < .01, `paper ${paper.id} pickup target must align with its rendered face`);
+}
+// Object-centred drawer geometry stays attached to its parent cabinet/table.
+for (const drawer of scene.drawers.filter(item => item.roomIndex === 0)) {
+  assert.ok(drawer.faces.length >= 5, `${drawer.id} should have a complete tray`);
+  const expectedFront = (drawer.z + drawer.depth) * 1.25;
+  assert.ok(drawer.faces.some(face => face.points.every(point => Math.abs(point[2] - expectedFront) < .01)), `${drawer.id} front face should align with the host furniture`);
+  const drawerHotspot = scene.hotspots.find(point => point.id === drawer.id);
+  assert.ok(drawerHotspot && Math.abs(drawerHotspot.z - (expectedFront + .125)) < .01, `${drawer.id} interaction target should sit just ahead of its front face`);
+}
+// A paper within reach must create an actual screen-space target at its own face.
+const testPaper = game.rooms[0].wordPapers.find(item => !item.drawerId);
+scene.camera = { x: testPaper.x * 1.25, y: scene.eyeHeight, z: testPaper.z * 1.25 + 2.5 };
 scene.yaw = 0; scene.pitch = 0;
-const horizonBefore = scene._project(0, scene.camera.y, -1).y;
-scene._look(0, -100, 0.0036);
-const horizonAfter = scene._project(0, scene.camera.y, -1).y;
-if (scene.pitch <= 0 || horizonAfter <= horizonBefore) throw new Error('Vertical mouse-look direction is inverted');
-if (scene.pitch < 0.34 || scene.pitch > 0.38) throw new Error('Desktop mouse sensitivity is not reduced to 75%');
-scene.pitch = 0; scene._look(0, -100, 0.0039);
-if (scene.pitch < 0.37 || scene.pitch > 0.41) throw new Error('Touch drag sensitivity is not reduced to 75%');
+scene.setActiveRoom(game, 0);
+scene.render();
+const paperTarget = scene.projectedHotspots.find(point => point.id === `word-paper-${testPaper.id}`);
+assert.ok(paperTarget, 'a reachable loose paper must have a projected pickup target');
+assert.equal(scene._nearestHotspot(paperTarget.x, paperTarget.y)?.id, `word-paper-${testPaper.id}`, 'the paper surface must be directly clickable/interactable');
+scene._drawWorldGeometry();
+assert.ok(scene._drawPrimitives.some(p => p.face.roomIndex === 0), 'active room geometry must render');
+assert.ok(!scene._drawPrimitives.some(p => p.face.roomIndex === 1 && p.face.zone !== 'partition' && p.face.zone !== 'connector'), 'gallery props must be culled from ticket hall');
+assert.ok(scene._visibleFacePool.length < scene.roomGeometry.length, 'render collection should exclude inactive-room props before projection');
+const transformedVertices = scene._vertexStamps.reduce((count, value) => count + (value === scene._vertexStamp ? 1 : 0), 0);
+assert.ok(transformedVertices < scene._vertices.length, 'camera transforms should touch only vertices used by renderable faces');
+scene.camera = { x: scene.roomOffsets[1], y: scene.eyeHeight, z: 6.484375 };
+scene.setActiveRoom(game, 1); scene._drawWorldGeometry();
+assert.ok(!scene._drawPrimitives.some(p => p.face.roomIndex === 0 && p.face.zone !== 'partition' && p.face.zone !== 'connector'), 'ticket hall props must be culled from gallery');
+scene.render();
+assert.equal(scene.paintingOverlay.style.display, 'block', 'high-resolution gallery paintings should render when inside the gallery');
 
-// A pointer-lock failure must not permanently disable later user-gesture retries.
-scene.releasePointerLock();
-scene._onPointerLockError();
-canvas.requestPointerLock = function () { throw new Error('simulated lock failure'); };
-listeners.pointerdown({ button: 0, pointerType: 'mouse', pointerId: 3, clientX: 480, clientY: 300 });
-if (!scene.drag) throw new Error('Drag-look fallback was not armed after a pointer-lock failure');
-scene.drag = null;
-const requestsBeforeRetry = global.__pointerLockRequests || 0;
-canvas.requestPointerLock = function () {
-  global.__pointerLockRequests = (global.__pointerLockRequests || 0) + 1;
-  document.pointerLockElement = this;
-  documentListeners.pointerlockchange?.();
-};
-scene.requestPointerLockFromGesture();
-if (!scene.pointerLocked || (global.__pointerLockRequests || 0) !== requestsBeforeRetry + 1) throw new Error('Pointer lock retry after failure did not work');
+// Stable painting mask does not depend on a camera-depth threshold that toggles.
+const sceneSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'canvas-scene.js'), 'utf8');
+const overlaySource = sceneSource.slice(sceneSource.indexOf('  _drawGalleryOverlay()'), sceneSource.indexOf('  _drawWorldGeometry()'));
+assert.ok(overlaySource.includes("face.layer < 1"), 'painting overlay should use a stable foreground-only mask');
+assert.ok(!overlaySource.includes('photoDepth') && !overlaySource.includes('_polygonDepthAt'), 'painting mask must not toggle on average-depth thresholds');
+const overlaysSource = sceneSource.slice(sceneSource.indexOf('  _drawOverlays()'), sceneSource.indexOf('  _drawEquippedPaper('));
+assert.ok(overlaysSource.includes('if (!point.wordPaper && !point.libraryNote)'), 'loose papers must not show glowing hotspot markers');
+assert.ok(scene._move && scene.jump, 'movement and jumping APIs should exist');
 
-// Portrait projection should retain a stable vertical field of view.
-scene.width = 390; scene.height = 844;
-const portraitProjection = scene._project(1, scene.camera.y, -1);
-if (!portraitProjection || portraitProjection.scale < 100) throw new Error('Portrait projection is using an excessively narrow focal length');
-if (!scene._frameFaceCount) throw new Error('No room faces were submitted for rendering');
-// Structural floors must render before walls, and room props must render after
-// architecture. This prevents the large ground plane from painting over desks.
-const renderLayers = scene._drawPrimitives.map(item => item.layer);
-for (let i = 1; i < renderLayers.length; i++) {
-  if (renderLayers[i] < renderLayers[i - 1]) throw new Error('Render layers are not in stable floor/architecture/prop order');
-}
-if (!scene.roomGeometry.some(face => face.layer === -1)) throw new Error('Floor render layer is missing');
-if (!scene.roomGeometry.some(face => face.layer === 0) || !scene.roomGeometry.some(face => face.layer === 1)) throw new Error('Architecture or object render layer is missing');
-if (scene.roomGeometry.some(face => face.points.length !== 4)) throw new Error('World geometry contains a non-quad surface');
-if (scene._drawPrimitives.some(primitive => primitive.points.length === 3)) throw new Error('Renderer emitted a triangle instead of an intact polygon');
-// Room-aware culling: only the active room's props render. Adjacent groups
-// may contribute real perimeter/partition walls and connector architecture only.
-scene.camera = { x: 0, y: 1.66, z: 2 };
-scene.yaw = -Math.PI / 2;
-scene._drawWorldGeometry();
-if (scene._drawPrimitives.some(item => item.face.roomIndex === 1 && item.face.zone !== 'partition' && item.face.zone !== 'connector')) throw new Error('Gallery props leaked into the ticket hall');
-if (!scene._drawPrimitives.some(item => item.face.roomIndex === 1 && item.face.zone === 'partition')) throw new Error('Adjacent room perimeter wall is missing');
-if (scene.roomGeometry.some(face => ['partition-backdrop','library-backdrop'].includes(face.zone))) throw new Error('Temporary doorway backdrops should not exist');
-scene.camera = { x: 20, y: 1.66, z: 2 };
-scene.yaw = 0;
-scene._drawWorldGeometry();
-if (scene._drawPrimitives.some(item => item.face.roomIndex === 0 && item.face.zone !== 'partition' && item.face.zone !== 'connector')) throw new Error('Ticket hall props leaked into the gallery');
-if (scene._drawPrimitives.some(item => item.face.roomIndex === 2 && item.face.zone !== 'partition' && item.face.zone !== 'connector')) throw new Error('Storeroom props leaked into the gallery');
-scene.camera = { x: 40, y: 1.66, z: 2 };
-scene._drawWorldGeometry();
-if (scene._drawPrimitives.some(item => item.face.roomIndex === 1 && item.face.zone !== 'partition' && item.face.zone !== 'connector')) throw new Error('Gallery props leaked into the storeroom');
-if (!scene._drawPrimitives.some(item => item.face.roomIndex === 3 && item.face.zone === 'partition')) throw new Error('Library perimeter wall should be visible from the storeroom');
-if (scene._drawPrimitives.some(item => item.face.roomIndex === 3 && item.face.zone !== 'partition')) throw new Error('Library shelves or papers leaked into the storeroom');
-scene.camera = { x: 40, y: 1.66, z: -20 }; scene.yaw = Math.PI;
-scene._drawWorldGeometry();
-if (scene._drawPrimitives.some(item => item.face.roomIndex === 2 && !['library-connector','partition'].includes(item.face.zone))) throw new Error('Storeroom props leaked into the library');
-if (!scene._drawPrimitives.some(item => item.face.roomIndex === 2 && item.face.zone === 'partition')) throw new Error('Storeroom perimeter wall should be visible from the library');
-for (let room = 0; room < 3; room++) {
-  if (!scene.roomGeometry.some(face => face.roomIndex === room && face.zone === 'partition' && face.points.every(point => Math.abs(point[2] - 7.5) < .001))) throw new Error(`Room ${room} is missing its front enclosing wall`);
-  const centerX = scene.roomOffsets[room];
-  if (scene._canOccupy(centerX, 7.25)) throw new Error(`Room ${room} front wall has no collision`);
-}
-// Jumping can land on a low table, remain supported while standing on it,
-// and transition to a fall when the player walks off the platform.
-scene.camera = { x: -3.9375, y: 1.66, z: -2.75 };
-scene.groundHeight = 0; scene.jumpHeight = 1.6; scene.jumpVelocity = -1;
-scene._stepJump(.05);
-if (Math.abs(scene.groundHeight - 1.55) > .02 || Math.abs(scene.camera.y - (scene.eyeHeight + 1.55)) > .02) throw new Error('Jump did not land on the desk platform');
-if (!scene._canOccupy(scene.camera.x, scene.camera.z)) throw new Error('Player cannot walk on a landed platform');
-scene.camera.x += 15;
-scene._refreshPlatformSupport();
-if (scene.groundHeight !== 0 || scene.jumpHeight <= 0) throw new Error('Walking off a platform did not initiate a fall');
-scene.camera = { x: 0, y: 1.66, z: 5.1875 }; scene.yaw = 0; scene.pitch = 0; scene.jumpHeight = 0; scene.groundHeight = 0;
-// A face crossing the near plane must not stroke the artificial clipping cap.
-let outlineMoveCount = 0, outlineLineCount = 0, outlineStrokeCount = 0;
-scene._drawClippedFaceOutline({
-  stroke: '#000',
-  points: [[-1, 0, 6], [1, 0, 6], [1, 1, -2], [-1, 1, -2]]
-}, {
-  beginPath() {}, moveTo() { outlineMoveCount++; }, lineTo() { outlineLineCount++; },
-  stroke() { outlineStrokeCount++; }
-});
-if (outlineStrokeCount !== 1 || outlineMoveCount !== outlineLineCount || outlineLineCount > 4) throw new Error('Near-plane clipping generated an artificial outline edge');
-// Library papers must sit beyond the aisle-facing shelf plane and sort with
-// the shelf geometry. Collecting one removes its world face and hotspot.
-const libraryNote = scene.libraryLayout.papers[0];
-const libraryNoteFace = scene.roomGeometry.find(face => face.libraryNoteIndex === libraryNote.id);
-const libraryRack = scene.libraryLayout.racks.find(rack => rack.id === libraryNote.rackId);
-if (!libraryNoteFace || libraryNoteFace.layer !== 1) throw new Error('Library paper is not in the shelf depth-sorting layer');
-if (Math.abs(libraryNote.z - (libraryRack.z + .36) - .006) > 1e-6) throw new Error('Library paper is not flush against the shelf end plane');
-if (libraryNoteFace.points.some(point => Math.abs(point[2] - (libraryRack.z + .366) * scene.roomScaleZ) > 1e-6)) throw new Error('Library paper vertices are not on the shelf end plane');
-scene.hotspots.push({ id: `library-paper-${libraryNote.id}`, libraryNote: true });
-if (!scene.collectLibraryPaper(libraryNote.id)) throw new Error('Library paper could not be collected');
-if (scene.hotspots.some(point => point.id === `library-paper-${libraryNote.id}`)) throw new Error('Collected paper hotspot was not removed');
-scene.camera = { x: 40, y: 1.66, z: -20 }; scene.yaw = Math.PI;
-scene._drawWorldGeometry();
-if (scene._drawPrimitives.some(item => item.face.libraryNoteIndex === libraryNote.id)) throw new Error('Collected paper face remained visible on its shelf');
-scene.setEquippedLibraryPaper({ title: 'Cataloguing', body: 'A short archive note used for testing.' });
-if (!scene.equippedLibraryPaper || scene.equippedLibraryPaper.title !== 'Cataloguing') throw new Error('Equipped paper state was not stored');
-scene.camera.z = -14.8;
-scene.setEquippedLibraryPaper(null);
-if (scene.equippedLibraryPaper !== null) throw new Error('Equipped paper did not clear when leaving the Library');
-// A normal jump must keep the full player head below the room ceiling.
-scene.groundHeight = 0; scene.jumpHeight = 0; scene.jumpVelocity = 7.2;
-for (let i = 0; i < 50 && (scene.jumpVelocity !== 0 || scene.jumpHeight > 0); i++) scene._stepJump(.04);
-if (scene.camera.y > 4.5 - .65 + .001) throw new Error('Player head crossed the room roof during a normal jump');
-
-// A jump started while standing on the tallest ordinary table cannot lift the
-// camera/eye point through the 4.5-unit room ceiling.
-scene.groundHeight = 2.15; scene.jumpHeight = 0; scene.jumpVelocity = 7.2;
-for (let i = 0; i < 50 && (scene.jumpVelocity !== 0 || scene.jumpHeight > 0); i++) scene._stepJump(.04);
-if (scene.camera.y > 4.5 - .65 + .001) throw new Error('Jump allowed the player camera to pass through the room roof');
-if (scene.jumpHeight > 4.5 - .65 - scene.eyeHeight - scene.groundHeight + .001) throw new Error('Jump exceeded the available ceiling clearance from a raised platform');
-// Crossing out of the Library triggers the room-change callback immediately.
-scene.camera = { x: 40, y: 1.66, z: -16.0 };
-scene._lastArea = 'library';
-let libraryExitEvent = null;
-scene.onAreaChange = (next, previous) => { libraryExitEvent = { next, previous }; };
-scene.camera.z = -14.9;
-scene._notifyAreaChanged();
-if (!libraryExitEvent || libraryExitEvent.previous !== 'library' || libraryExitEvent.next !== '2') throw new Error('Leaving the Library did not trigger the inventory-clear transition');
-
-scene.dispose();
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const scriptPaths = [...html.matchAll(/<script\s+src=[\"']([^\"']+)/g)].map(match => match[1]);
+const scriptPaths = [...html.matchAll(/<script\s+src=["']([^"']+)/g)].map(match => match[1]);
 for (const scriptPath of scriptPaths) {
-  if (!fs.existsSync(path.join(__dirname, '..', scriptPath))) throw new Error(`Missing script: ${scriptPath}`);
-  if (/^https?:/i.test(scriptPath)) throw new Error('External script dependency found');
+  assert.ok(fs.existsSync(path.join(__dirname, '..', scriptPath)), `missing local script ${scriptPath}`);
+  assert.ok(!/^https?:/i.test(scriptPath), 'no external JavaScript libraries should be loaded');
 }
-if (/three\.min\.js|type=[\"']module[\"']/i.test(html)) throw new Error('External renderer or module loader found');
-const hotbarHtml = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const hotbarApp = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
-if (!hotbarHtml.includes('id="paper-hotbar"') || !hotbarHtml.includes('paper-hotbar-slots')) throw new Error('Library paper hotbar markup is missing');
-if (!hotbarApp.includes('state.libraryInventory.push(index)') || !hotbarApp.includes('equipLibraryPaper(index)')) throw new Error('Collected papers are not automatically added and equipped');
-if (!hotbarApp.includes('state.libraryInventory = []') || !hotbarApp.includes('scene?.setEquippedLibraryPaper(null)')) throw new Error('Library paper inventory is not cleared on area exit');
-if (!hotbarApp.includes('paper-slot-art')) throw new Error('Hotbar slots do not render paper previews');
-if (!hotbarApp.includes("key === '0' ? 9 : Number(key) - 1")) throw new Error('Numeric hotbar selection is missing');
-
-console.log('Passed: Stage 8/9 and tiers; resident world geometry with active-room prop culling and real perimeter walls; platform landing/walking/falling; conservative face-level culling; continuous connectors; optional 20-bookcase library populated with books and ten randomized shelf-end collectible papers plus a movement-safe hotbar; roof-limited jumping; solved-paper HUD stack; jump clearance over medium furniture; door panel/keypad disappearance; facing chairs and raised seating; single-quad paper surfaces and inline print rendering; intact polygon drawing; gallery textures; furniture collision; pointer lock and mouse controls; HDPI scaling; idle invalidation; low-resolution scene render with high-resolution gallery artwork overlay; local HTML/JS resources.');
+assert.ok(!/three\.min\.js|type=["']module["']/i.test(html), 'project must remain native HTML/JavaScript without external modules');
+assert.equal((html.match(/class="progress-item/g) || []).length, 4, 'HUD progression must show four rooms');
+assert.ok(html.includes('20 PANELS'), 'menu copy should advertise all 20 panels');
+const appSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
+assert.ok(appSource.includes("jumpButton.addEventListener('pointerdown'"), 'mobile jump must trigger on pointerdown');
+assert.ok(appSource.includes('jumpButton.setPointerCapture(event.pointerId)'), 'jump button should retain touch pointer capture');
+assert.ok(appSource.includes("if (event.detail === 0) activateMobileJump(event)"), 'keyboard accessibility should remain available for the jump button');
+const coarseCss = html.slice(html.indexOf('@media (pointer: coarse) and (min-width: 681px)'));
+assert.ok(coarseCss.includes('.mobile-jump { display: grid;'), 'landscape tablets must receive a visible jump button');
+assert.ok(coarseCss.includes('touch-action: none'), 'mobile jump button must suppress browser gesture cancellation');
+assert.ok(html.includes('prefers-reduced-motion: reduce'), 'UI animations must respect reduced-motion preferences');
+assert.ok(fs.existsSync(path.join(__dirname, '..', 'assets', 'gallery-photo.png')), 'gallery photo fallback asset should ship with the project');
+assert.ok(appSource.includes("'assets/gallery-photo.png'"), 'gallery viewer should fall back to the restored standalone asset');
+scene.setRoom(game, 0);
+const animatedDrawer = scene.drawers.find(drawer => drawer.roomIndex === 0);
+assert.ok(animatedDrawer && animatedDrawer.faces.length > 0, 'drawer moving faces should be registered for animation');
+assert.equal(scene.toggleDrawer(animatedDrawer.id), true, 'drawer should open');
+assert.equal(animatedDrawer.offset, 0, 'drawer motion should begin from its closed position');
+assert.equal(animatedDrawer.targetOffset, .48, 'drawer should target its open position');
+assert.equal(scene._stepDrawerAnimations(.06), true, 'drawer animation should update the moving geometry');
+assert.ok(animatedDrawer.offset > 0 && animatedDrawer.offset < .48, 'drawer should ease rather than snap open');
+assert.equal(scene.toggleDrawer(animatedDrawer.id), false, 'drawer should close');
+assert.equal(animatedDrawer.targetOffset, 0, 'drawer should target its closed position');
+assert.equal(scene._stepDrawerAnimations(.06), true, 'closing drawer animation should update geometry');
+const originalCanvasRect = canvas.getBoundingClientRect;
+canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2560, height: 1440 });
+scene.resize();
+assert.ok(canvas.width * canvas.height <= scene.maxPixels * 1.01, 'high-resolution main scene should respect its backing-store budget');
+scene._drawAmbientEffects(1000);
+assert.equal(scene.effectOverlay.style.display, 'block', 'ambient overlay should render while a game room is active');
+assert.ok(scene.effectOverlay.width * scene.effectOverlay.height <= 260000 * 1.01, 'ambient effect overlay should stay within its pixel budget');
+scene.camera.x = scene.roomOffsets[1];
+scene.setActiveRoom(game, 1);
+scene.render();
+assert.ok(scene.paintingOverlay.width * scene.paintingOverlay.height <= 700000 * 1.01, 'Gallery painting overlay should stay within its pixel budget');
+scene.camera.x = 0;
+scene.setActiveRoom(game, 0);
+canvas.getBoundingClientRect = originalCanvasRect;
+scene.resize();
+assert.equal(scene.jump(), true, 'jump action should start from the floor');
+assert.equal(scene.jumpVelocity, 7.2, 'jump input should set the upward impulse');
+scene.jumpVelocity = 0; scene.jumpHeight = 0;
+scene.dispose();
+console.log('PASS: 2 ESL stages × 3 difficulty tiers; four-room progression; 1.5x room footprints; Ticket Hall and Storeroom furniture/drawers; surface-aligned papers/hotspots; inactive-room vertex culling; Library connector; mobile pointerdown jump/touch capture; 20 answer panels; original FOV and movement; stable Gallery artwork; byte-identical gallery PNG; ambient overlay with clock/fan/glint effects; eased drawer motion; reduced-motion styling; strict main/ambient/Gallery pixel budgets at 1440p; local HTML/JavaScript resources.');
