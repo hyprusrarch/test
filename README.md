@@ -66,3 +66,5 @@ node tests/smoke.js
 ```
 
 The tests cover Stage 8 and Stage 9 at Core, Stretch and Challenge; five panels and five code characters in every room; collected-word answers; four-room progression and final Library lock; full-size readable paper slips; seven additional Ticket Hall tables with tabletop props; fourteen Ticket Hall drawers with both empty and paper-filled trays; 20 bookcases and ten Library notes; all-room geometry; active-room prop culling; restored original FOV; enlarged room shells with unchanged object-space positions and dimensions; matching collision, paper-hotspot and drawer transforms; 1.5× movement speed; stable gallery painting masking; restored gallery image bytes and fallback asset; drawer easing; ambient overlay creation and drawing; reduced-motion styling; and local HTML/JavaScript references.
+
+testing - add custom xp value changes in konami code menu, either positive or negative
