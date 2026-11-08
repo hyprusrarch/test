@@ -1,6 +1,9 @@
 (function () {
 
 /* Native Canvas 2D perspective renderer. No WebGL or external dependencies. */
+const OCCLUDER_LIMIT = 64;
+const BOOK_BAND_LINES = [.16, .25, .82];
+const BOOK_PLAIN_LINES = [.17, .82];
 const MAIN_ROOM_SCALE = 1.5;
 const MAIN_ROOM_SPACING = 23.5;
 const LIBRARY_WORLD_OFFSET_Z = 2.2;
@@ -780,6 +783,7 @@ class CanvasMuseumScene {
     // Box faces are stored with consistent winding. Furniture and its parts
     // stay in object space; wall-mounted/ceiling fixtures opt into room scale.
     const fixedPoly = this._boxRoomAnchored ? this._polyFixed.bind(this) : this._polyObjectFixed.bind(this);
+    const firstFace = this._geometry.length;
     fixedPoly([[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[x1,y0,z0]], x, z, shade(color, 0.62));
     fixedPoly([[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], x, z, color, 'rgba(16,20,20,.4)');
     fixedPoly([[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0]], x, z, shade(color, 1.2));
@@ -787,6 +791,22 @@ class CanvasMuseumScene {
     fixedPoly([[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]], x, z, shade(color, 0.84));
     if (accent) {
       fixedPoly([[x0,y1-0.07,z1+0.006],[x1,y1-0.07,z1+0.006],[x1,y1,z1+0.006],[x0,y1,z1+0.006]], x, z, accent);
+    }
+    let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = firstFace; i < this._geometry.length; i++) {
+      for (const point of this._geometry[i].points) {
+        if (point[0] < minX) minX = point[0]; if (point[0] > maxX) maxX = point[0];
+        if (point[1] < minY) minY = point[1]; if (point[1] > maxY) maxY = point[1];
+        if (point[2] < minZ) minZ = point[2]; if (point[2] > maxZ) maxZ = point[2];
+      }
+    }
+    const mx = (minX + maxX) / 2, my = (minY + maxY) / 2, mz = (minZ + maxZ) / 2;
+    for (let i = firstFace; i < this._geometry.length; i++) {
+      const face = this._geometry[i];
+      if (Math.abs(face.ny) > 0.5) continue;
+      const outward = (face.cx - mx) * face.nx + (face.cy - my) * face.ny + (face.cz - mz) * face.nz;
+      face.solidSide = outward >= 0 ? 1 : -1;
+      face.solidBottom = minY;
     }
   }
 
@@ -862,9 +882,11 @@ class CanvasMuseumScene {
     // A hotspot/label is hidden only when a nearer projected polygon covers
     // the point. Interpolate reciprocal depth at that exact screen coordinate
     // rather than comparing polygon-average depth, which can hide visible edges.
+    const limit = depth - tolerance;
     for (const face of this._frameFaces) {
-      if (!face.points || face.layer < 0) continue;
+      if (face.layer < 0 || !face.points) continue;
       const bounds = face._screenBounds;
+      if (face._nearDepth !== undefined && face._nearDepth >= limit) continue;
       if (bounds && (x < bounds.minX || x > bounds.maxX || y < bounds.minY || y > bounds.maxY)) continue;
       const points = face._framePoints || [];
       if (!this._screenPointInPolygon(x, y, points)) continue;
@@ -2303,6 +2325,9 @@ class CanvasMuseumScene {
     const bounds = face._screenBounds || (face._screenBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 });
     bounds.minX = minX; bounds.minY = minY; bounds.maxX = maxX; bounds.maxY = maxY;
     face._depth = depth;
+    let nearDepth = Infinity;
+    for (let i = 0; i < points.length; i++) if (points[i].depth < nearDepth) nearDepth = points[i].depth;
+    face._nearDepth = nearDepth;
     return face;
   }
 
@@ -2424,24 +2449,81 @@ class CanvasMuseumScene {
       ctx.lineWidth = 1;
       ctx.stroke();
     }
-    if ((Number.isInteger(face.paperIndex) || Number.isInteger(face.libraryNoteIndex)) && points.length === 4) this._drawPaperDetails(face, points, ctx);
-    if (Number.isInteger(face.wordPaperIndex) && points.length === 4) this._drawWordPaperDetails(face, points, ctx);
-    if (Number.isInteger(face.answerPanelIndex) && points.length === 4) this._drawAnswerPanelDetails(face, points, ctx);
-    if (Number.isInteger(face.libraryBookIndex) && points.length === 4) this._drawLibraryBookDetails(face, points, ctx);
+    this._drawFaceDetails(face, points, ctx);
+  }
+
+  _drawFaceDetails(face, points, ctx) {
+    if (points.length !== 4) return;
+    if (Number.isInteger(face.paperIndex) || Number.isInteger(face.libraryNoteIndex)) this._drawPaperDetails(face, points, ctx);
+    if (Number.isInteger(face.wordPaperIndex)) this._drawWordPaperDetails(face, points, ctx);
+    if (Number.isInteger(face.answerPanelIndex)) this._drawAnswerPanelDetails(face, points, ctx);
+    if (Number.isInteger(face.libraryBookIndex)) this._drawLibraryBookDetails(face, points, ctx);
+  }
+
+  _inscribedRect(points, out, offset) {
+    const n = points.length;
+    if (n < 3) return false;
+    let cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) { cx += Math.round(points[i].x); cy += Math.round(points[i].y); }
+    cx /= n; cy /= n;
+    let left = -Infinity, right = Infinity, top = -Infinity, bottom = Infinity;
+    for (let i = 0; i < n; i++) {
+      const ax = Math.round(points[i].x), ay = Math.round(points[i].y);
+      const bx = Math.round(points[(i + 1) % n].x), by = Math.round(points[(i + 1) % n].y);
+      if ((ay <= cy && by > cy) || (by <= cy && ay > cy)) {
+        const x = ax + (cy - ay) * (bx - ax) / (by - ay);
+        if (x <= cx) { if (x > left) left = x; } else if (x < right) right = x;
+      }
+      if ((ax <= cx && bx > cx) || (bx <= cx && ax > cx)) {
+        const y = ay + (cx - ax) * (by - ay) / (bx - ax);
+        if (y <= cy) { if (y > top) top = y; } else if (y < bottom) bottom = y;
+      }
+    }
+    if (!(left > -Infinity && right < Infinity && top > -Infinity && bottom < Infinity)) return false;
+    for (const scale of [1, .85, .7, .5]) {
+      const l = cx + (left - cx) * scale + 1, r = cx + (right - cx) * scale - 1;
+      const t = cy + (top - cy) * scale + 1, b = cy + (bottom - cy) * scale - 1;
+      if (r - l < 12 || b - t < 12) return false;
+      if (this._rectInsideConvex(points, l, t, r, b)) {
+        out[offset] = l; out[offset + 1] = t; out[offset + 2] = r; out[offset + 3] = b;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _rectInsideConvex(points, l, t, r, b) {
+    const n = points.length;
+    let sign = 0;
+    for (let i = 0; i < n; i++) {
+      const ax = Math.round(points[i].x), ay = Math.round(points[i].y);
+      const bx = Math.round(points[(i + 1) % n].x), by = Math.round(points[(i + 1) % n].y);
+      const ex = bx - ax, ey = by - ay;
+      for (let k = 0; k < 4; k++) {
+        const px = k & 1 ? r : l, py = k & 2 ? b : t;
+        const cross = ex * (py - ay) - ey * (px - ax);
+        if (cross === 0) continue;
+        const s = cross > 0 ? 1 : -1;
+        if (sign === 0) sign = s; else if (s !== sign) return false;
+      }
+    }
+    return true;
   }
 
   _drawLibraryBookDetails(face, points, ctx) {
+    const bounds = face._screenBounds;
+    if (bounds && bounds.maxX - bounds.minX < 10 && bounds.maxY - bounds.minY < 10) return;
     const [a,b,c,d] = points;
-    const lerp = (p,q,t) => ({ x:p.x+(q.x-p.x)*t, y:p.y+(q.y-p.y)*t });
-    ctx.save();
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.clip();
     ctx.strokeStyle = 'rgba(218,190,130,.62)';
     ctx.lineWidth = 1;
-    for (const t of (face.bookBand ? [.16,.25,.82] : [.17,.82])) {
-      const left = lerp(a,d,t), right = lerp(b,c,t);
-      ctx.beginPath(); ctx.moveTo(left.x,left.y); ctx.lineTo(right.x,right.y); ctx.stroke();
+    ctx.beginPath();
+    const bands = face.bookBand ? BOOK_BAND_LINES : BOOK_PLAIN_LINES;
+    for (let i = 0; i < bands.length; i++) {
+      const t = bands[i];
+      ctx.moveTo(a.x + (d.x - a.x) * t, a.y + (d.y - a.y) * t);
+      ctx.lineTo(b.x + (c.x - b.x) * t, b.y + (c.y - b.y) * t);
     }
-    ctx.restore();
+    ctx.stroke();
   }
 
   _drawWordPaperDetails(face, points, ctx) {
@@ -2648,15 +2730,15 @@ class CanvasMuseumScene {
           if (face.zone === 'connector' && !nearSideConnector) continue;
           if (face.zone === 'library-connector' && !nearLibraryConnector) continue;
         } else if (activeRoom === 3) {
-          if (face.roomIndex !== 2 || !['library-connector', 'partition'].includes(face.zone)) continue;
+          if (face.roomIndex !== 2 || (face.zone !== 'library-connector' && face.zone !== 'partition')) continue;
         } else {
           if (face.zone === 'connector' && !nearSideConnector) continue;
           if (face.zone === 'library-connector' && !nearLibraryConnector) continue;
           if (face.zone !== 'partition' && face.zone !== 'connector' && face.zone !== 'library-connector') continue;
         }
         if (Number.isInteger(face.libraryNoteIndex) && this.collectedLibraryPapers.has(face.libraryNoteIndex)) continue;
-        if (Number.isInteger(face.paperIndex) && this.collectedRoomPapers.has(`${face.paperRoom}:${face.paperIndex}`)) continue;
-        if (Number.isInteger(face.wordPaperIndex) && this.collectedWordPapers.has(`${face.wordPaperRoom}:${face.wordPaperIndex}`)) continue;
+        if (Number.isInteger(face.paperIndex) && this.collectedRoomPapers.has(face._paperKey || (face._paperKey = `${face.paperRoom}:${face.paperIndex}`))) continue;
+        if (Number.isInteger(face.wordPaperIndex) && this.collectedWordPapers.has(face._wordKey || (face._wordKey = `${face.wordPaperRoom}:${face.wordPaperIndex}`))) continue;
         if (face.drawerPaper && !this.drawerById.get(face.drawerId)?.open) continue;
         if (this._doorBarrierIsOpen(face)) continue;
         visibleFaces.push(face);
@@ -2670,25 +2752,75 @@ class CanvasMuseumScene {
     const drawList = this._drawPrimitives;
     drawList.length = 0;
     let order = 0;
+    const camX = this.camera.x, camY = this.camera.y, camZ = this.camera.z;
     for (const face of visibleFaces) {
+      if (face.solidSide !== undefined && camY > face.solidBottom) {
+        const p0 = face.points[0];
+        if (face.solidSide * (face.nx * (camX - p0[0]) + face.ny * (camY - p0[1]) + face.nz * (camZ - p0[2])) <= 0) continue;
+      }
       if (!this._projectFace(face)) continue;
       const points = face._framePoints;
       projectedFaces.push(face);
       const primitive = this._drawItemPool[order] || (this._drawItemPool[order] = {});
       primitive.face = face;
       primitive.points = points;
-      primitive.depth = face._depth;
-      primitive.layer = face.layer;
-      primitive.order = order;
+      primitive.key = face.layer * 1024 - Math.min(face._depth, 1000);
       primitive.type = face.texture === 'gallery-photo' && points.length === 4 ? 'texture' : 'fill';
       drawList.push(primitive);
       order++;
     }
 
     // The renderer has no depth buffer. Preserve semantic layers and sort
-    // only the already-culled faces in the active room back-to-front.
-    drawList.sort((a, b) => (a.layer - b.layer) || (b.depth - a.depth) || (a.order - b.order));
-    for (let i = 0; i < drawList.length; i++) this._drawPrimitive(drawList[i], ctx);
+    // only the already-culled faces in the active room back-to-front. Array
+    // sort is stable, so equal keys keep submission order.
+    drawList.sort((a, b) => a.key - b.key);
+    const occluders = this._occluderRects || (this._occluderRects = new Float32Array(OCCLUDER_LIMIT * 4));
+    let occluderCount = 0;
+    for (let i = drawList.length - 1; i >= 0; i--) {
+      const primitive = drawList[i];
+      const face = primitive.face;
+      primitive.skip = false;
+      const bounds = face._screenBounds;
+      const x0 = bounds.minX - 1, x1 = bounds.maxX + 1, y0 = bounds.minY - 1, y1 = bounds.maxY + 1;
+      for (let k = 0; k < occluderCount; k++) {
+        const o = k * 4;
+        if (x0 >= occluders[o] && x1 <= occluders[o + 2] && y0 >= occluders[o + 1] && y1 <= occluders[o + 3]) { primitive.skip = true; break; }
+      }
+      if (primitive.skip || occluderCount >= OCCLUDER_LIMIT || primitive.type === 'texture') continue;
+      if ((bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY) < 600) continue;
+      let opaque = face._opaque;
+      if (opaque === undefined) opaque = face._opaque = !!face.fill && !face.fill.startsWith('rgba') && !face.fill.startsWith('hsla') && !face.texture;
+      if (!opaque) continue;
+      if (this._inscribedRect(primitive.points, occluders, occluderCount * 4)) occluderCount++;
+    }
+    let fill = null, stroke = null;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < drawList.length; i++) {
+      const primitive = drawList[i];
+      if (primitive.skip) continue;
+      const face = primitive.face;
+      if (primitive.type === 'texture') { this._drawPrimitive(primitive, ctx); fill = null; stroke = null; continue; }
+      const points = primitive.points;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(points[0].x), Math.round(points[0].y));
+      for (let k = 1; k < points.length; k++) ctx.lineTo(Math.round(points[k].x), Math.round(points[k].y));
+      ctx.closePath();
+      if (face.fill !== fill) { ctx.fillStyle = face.fill; fill = face.fill; }
+      ctx.fill();
+      if (face.stroke) {
+        if (face.stroke !== stroke) { ctx.strokeStyle = face.stroke; stroke = face.stroke; }
+        ctx.stroke();
+      }
+      let detail = face._detail;
+      if (detail === undefined) {
+        detail = face._detail = Number.isInteger(face.paperIndex) || Number.isInteger(face.libraryNoteIndex) ||
+          Number.isInteger(face.wordPaperIndex) || Number.isInteger(face.answerPanelIndex) || Number.isInteger(face.libraryBookIndex);
+      }
+      if (detail) {
+        this._drawFaceDetails(face, points, ctx);
+        fill = null; stroke = null; ctx.lineWidth = 1;
+      }
+    }
     this._frameFaceCount = projectedFaces.length;
   }
 
