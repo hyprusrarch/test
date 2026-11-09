@@ -24,6 +24,7 @@ class CanvasMuseumScene {
     this.collectedLibraryPapers = new Set();
     this.collectedRoomPapers = new Set();
     this.collectedWordPapers = new Set();
+    this.collectedTorches = new Set();
     this.drawers = [];
     this.drawerById = new Map();
     this.libraryPanelSolved = Array(5).fill(false);
@@ -419,37 +420,82 @@ class CanvasMuseumScene {
       ctx.fillStyle = '#ffe9c1'; ctx.fill();
     }
 
-    if (activeRoom === 0) this._drawClockEffect(ctx, seconds);
+    if (activeRoom === 0) this._drawSconceEffect(ctx, seconds);
+    this._drawTorchGlows(ctx, seconds, activeRoom);
+    if (this.heldTorch) this._drawHeldTorch(ctx, seconds);
     if (activeRoom === 2) this._drawFanEffect(ctx, seconds);
     if (activeRoom === 1) this._drawGalleryGlints(ctx, seconds);
     ctx.globalAlpha = 1;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  _drawClockEffect(ctx, seconds) {
-    const world = this._roomWorldPoint(0, -5.55, 2.62, -5.56);
+  _drawFlame(ctx, x, y, size, seconds, phase) {
+    const flick = 1 + Math.sin(seconds * 9.1 + phase) * .06 + Math.sin(seconds * 15.7 + phase * 2.3) * .04;
+    const sway = Math.sin(seconds * 5.3 + phase) * size * .10;
+    const h = size * flick;
+    ctx.globalAlpha = (this.dark ? .20 : .11) + Math.sin(seconds * 7 + phase) * .02;
+    ctx.fillStyle = '#ffb347';
+    ctx.beginPath(); ctx.arc(x, y - h * .45, h * 1.9, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = (this.dark ? .26 : .16);
+    ctx.beginPath(); ctx.arc(x, y - h * .45, h * 1.0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ff8a22';
+    ctx.beginPath();
+    ctx.moveTo(x - h * .30, y);
+    ctx.quadraticCurveTo(x - h * .36, y - h * .55, x + sway, y - h * 1.25);
+    ctx.quadraticCurveTo(x + h * .36, y - h * .55, x + h * .30, y);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ffd66e';
+    ctx.beginPath();
+    ctx.moveTo(x - h * .15, y);
+    ctx.quadraticCurveTo(x - h * .18, y - h * .40, x + sway * .6, y - h * .78);
+    ctx.quadraticCurveTo(x + h * .18, y - h * .40, x + h * .15, y);
+    ctx.closePath(); ctx.fill();
+  }
+
+  _drawSconceEffect(ctx, seconds) {
+    const world = this._roomWorldPoint(0, -5.55, 2.50, -5.50);
     const point = this._project(world.x, world.y, world.z);
-    if (!point || point.depth > 17 || point.x < -48 || point.x > this.width + 48 || point.y < -48 || point.y > this.height + 48) return;
-    const radius = Math.max(7, Math.min(27, point.scale * .14));
-    const minute = ((seconds / 60) % 60) / 60 * Math.PI * 2 - Math.PI / 2;
-    const hour = ((seconds / 3600) % 12) / 12 * Math.PI * 2 - Math.PI / 2;
-    const second = (seconds % 60) / 60 * Math.PI * 2 - Math.PI / 2;
-    ctx.save(); ctx.translate(point.x, point.y);
-    ctx.fillStyle = 'rgba(14,20,21,.86)'; ctx.beginPath(); ctx.arc(0,0,radius+2,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#d8c49c'; ctx.beginPath(); ctx.arc(0,0,radius,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#60472e'; ctx.lineWidth = Math.max(.8,radius*.075);
-    for (let i=0;i<12;i++) {
-      const angle = i*Math.PI/6;
-      ctx.beginPath(); ctx.moveTo(Math.cos(angle)*radius*.76,Math.sin(angle)*radius*.76);
-      ctx.lineTo(Math.cos(angle)*radius*.91,Math.sin(angle)*radius*.91); ctx.stroke();
+    if (!point || point.depth > 17 || point.x < -60 || point.x > this.width + 60 || point.y < -60 || point.y > this.height + 60) return;
+    this._drawFlame(ctx, point.x, point.y, Math.max(5, Math.min(30, point.scale * .075)), seconds, 0.7);
+  }
+
+  _drawTorchGlows(ctx, seconds, activeRoom) {
+    const torches = this.torches;
+    if (!torches) return;
+    for (let i = 0; i < torches.length; i++) {
+      const torch = torches[i];
+      if (torch.roomIndex !== activeRoom || this.collectedTorches.has(torch.id)) continue;
+      let extra = 0;
+      if (torch.drawerId) {
+        const drawer = this.drawerById.get(torch.drawerId);
+        if (!drawer?.open) continue;
+        extra = drawer.offset;
+      }
+      const world = this._roomWorldPoint(activeRoom, torch.x, torch.y + .12, torch.z + extra);
+      const point = this._project(world.x, world.y, world.z);
+      if (!point || point.depth > 14 || point.x < -40 || point.x > this.width + 40 || point.y < -40 || point.y > this.height + 40) continue;
+      this._drawFlame(ctx, point.x, point.y, Math.max(2.5, Math.min(14, point.scale * .035)), seconds, i * 1.7);
     }
-    ctx.strokeStyle = '#493629'; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1,radius*.10);
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(hour)*radius*.42,Math.sin(hour)*radius*.42); ctx.stroke();
-    ctx.lineWidth = Math.max(.7,radius*.065); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(minute)*radius*.68,Math.sin(minute)*radius*.68); ctx.stroke();
-    ctx.strokeStyle = '#a44f39'; ctx.lineWidth = Math.max(.55,radius*.025);
-    ctx.beginPath(); ctx.moveTo(-Math.cos(second)*radius*.16,-Math.sin(second)*radius*.16);
-    ctx.lineTo(Math.cos(second)*radius*.78,Math.sin(second)*radius*.78); ctx.stroke();
-    ctx.fillStyle = '#493629'; ctx.beginPath(); ctx.arc(0,0,Math.max(1,radius*.06),0,Math.PI*2); ctx.fill();
+  }
+
+  _drawHeldTorch(ctx, seconds) {
+    const w = this.width, h = this.height;
+    const compact = w < 680;
+    const unit = compact ? .62 : 1;
+    const baseX = w - (compact ? 56 : 120), baseY = h + 6;
+    const tipX = baseX - 46 * unit, tipY = h - 190 * unit;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 16 * unit;
+    ctx.beginPath(); ctx.moveTo(baseX + 4, baseY); ctx.lineTo(tipX + 4, tipY + 4); ctx.stroke();
+    ctx.strokeStyle = '#6d4a2c'; ctx.lineWidth = 13 * unit;
+    ctx.beginPath(); ctx.moveTo(baseX, baseY); ctx.lineTo(tipX, tipY); ctx.stroke();
+    ctx.strokeStyle = '#8b6338'; ctx.lineWidth = 4 * unit;
+    ctx.beginPath(); ctx.moveTo(baseX - 3 * unit, baseY); ctx.lineTo(tipX - 3 * unit, tipY); ctx.stroke();
+    ctx.strokeStyle = '#2b2119'; ctx.lineWidth = 24 * unit;
+    ctx.beginPath(); ctx.moveTo(tipX + 6 * unit, tipY + 34 * unit); ctx.lineTo(tipX, tipY); ctx.stroke();
+    this._drawFlame(ctx, tipX, tipY - 6 * unit, 46 * unit, seconds, 0.3);
     ctx.restore();
   }
 
@@ -1330,6 +1376,7 @@ class CanvasMuseumScene {
       });
       this.libraryPaperLayout.push({ ...note, faceId: face.faceId });
     }
+    this._buildTorches(3);
     this._activeLayer = 1;
     // Sign is on the library back wall.
     this._poly([[-2.2,3.72,-27.9],[2.2,3.72,-27.9],[2.2,4.18,-27.9],[-2.2,4.18,-27.9]], '#55432f', '#a17b4d');
@@ -1347,6 +1394,8 @@ class CanvasMuseumScene {
     if (menu) this._stopAmbientLoop();
     this.dark = false;
     this.torch = false;
+    this._timedTorch = false;
+    this.heldTorch = false;
     this.mapKinds = (game?.rooms || []).map(room => room.kind || 'vocab');
     while (this.mapKinds.length < 4) this.mapKinds.push(['vocab','reading','grammar','library'][this.mapKinds.length]);
     this.roomScaleX = MAIN_ROOM_SCALE; // room footprint is compact; props retain their 1.25x object scale
@@ -1363,11 +1412,13 @@ class CanvasMuseumScene {
     this.collectedLibraryPapers = new Set();
     this.collectedRoomPapers = new Set();
     this.collectedWordPapers = new Set();
+    this.collectedTorches = new Set();
     this.libraryPanelSolved = Array(5).fill(false);
     this.equippedLibraryPaper = null;
     this.equippedPaper = null;
     this.libraryLayout = this._createLibraryLayout(game);
     this._prepareDrawerLayouts(game);
+    this._prepareTorchLayout();
     this.camera = { x: 0, y: this.eyeHeight, z: 5.1875 * Math.min(this.roomScaleZ, 1.25) };
     this.yaw = 0;
     this.pitch = 0;
@@ -1383,6 +1434,81 @@ class CanvasMuseumScene {
     this._lastArea = this._currentAreaId();
     this.invalidate();
     this._startAmbientLoop();
+  }
+
+  _prepareTorchLayout() {
+    this.torches = [];
+    const floor = [
+      [0, -0.2, -0.2], [0, 5.8, 5], [1, -0.2, -0.2], [1, -6.2, 5],
+      [2, -0.2, -0.2], [2, 5.8, 5], [2, -6.2, -5],
+      [3, -0.2, -20.1], [3, -6.2, -14.9], [3, 5.8, -14.9]
+    ];
+    for (const [roomIndex, x, z] of floor) {
+      this.torches.push({ id: this.torches.length, roomIndex, x, y: .02, z, axis: 'x', length: .36 });
+    }
+    for (const drawerId of ['drawer-0-3', 'drawer-0-8', 'drawer-0-12', 'drawer-1-0']) {
+      const drawer = this.drawerById.get(drawerId);
+      if (!drawer) continue;
+      this.torches.push({
+        id: this.torches.length, roomIndex: drawer.roomIndex, drawerId,
+        x: drawer.x, y: drawer.y + .03, z: drawer.z + drawer.depth * .53, axis: 'z', length: .30
+      });
+    }
+  }
+
+  _buildTorches(roomIndex) {
+    const previousLayer = this._activeLayer;
+    this._activeLayer = 2;
+    for (const torch of this.torches || []) if (torch.roomIndex === roomIndex) this._buildTorchGeometry(torch);
+    this._activeLayer = previousLayer;
+  }
+
+  _buildTorchGeometry(torch) {
+    const { x: cx, y, z: cz, axis, length: L } = torch;
+    const meta = {
+      torchIndex: torch.id, noVertexDedup: true,
+      ...(torch.drawerId ? { drawerId: torch.drawerId, drawerPaper: true, drawerMove: true } : {})
+    };
+    const P = (a, h, s) => axis === 'x' ? [cx + a, y + h, cz + s] : [cx + s, y + h, cz + a];
+    const emit = (points, fill, stroke = null) => this._polyObjectFixed(points.map(q => P(q[0], q[1], q[2])), cx, cz, fill, stroke, null, meta);
+    const box = (a0, a1, h0, h1, s0, s1, color) => {
+      emit([[a0,h0,s0],[a0,h1,s0],[a1,h1,s0],[a1,h0,s0]], shade(color, .62));
+      emit([[a0,h0,s1],[a1,h0,s1],[a1,h1,s1],[a0,h1,s1]], color, 'rgba(16,20,20,.4)');
+      emit([[a0,h1,s1],[a1,h1,s1],[a1,h1,s0],[a0,h1,s0]], shade(color, 1.2));
+      emit([[a0,h0,s0],[a0,h0,s1],[a0,h1,s1],[a0,h1,s0]], shade(color, .72));
+      emit([[a1,h0,s1],[a1,h0,s0],[a1,h1,s0],[a1,h1,s1]], shade(color, .84));
+    };
+    const half = L / 2;
+    box(-half, half - .10, 0, .05, -.025, .025, '#7a5532');
+    box(half - .13, half, 0, .075, -.04, .04, '#2b2119');
+    box(half - .11, half - .02, .075, .09, -.03, .03, '#c4561f');
+    const scale = torch.drawerId ? .6 : 1;
+    const c = half - .065, base = .09;
+    const outer = [[-.036,.04],[0,0],[.036,.04],[0,.17]];
+    const inner = [[-.017,.03],[0,0],[.017,.03],[0,.12]];
+    for (const [shape, fill] of [[outer, '#ff8f2a'], [inner, '#ffd66e']]) {
+      emit(shape.map(([w, h]) => [c + w * scale, base + h * scale, 0]), fill);
+      emit(shape.map(([w, h]) => [c, base + h * scale, w * scale]), fill);
+    }
+  }
+
+  collectTorch(index) {
+    const id = Number(index);
+    if (!Number.isInteger(id) || id < 0 || this.collectedTorches.has(id)) return false;
+    this.collectedTorches.add(id);
+    const hotspotId = `torch-${id}`;
+    this.hotspots = this.hotspots.filter(point => point.id !== hotspotId);
+    if (this.focused === hotspotId) this._setFocus(null);
+    this.invalidate();
+    return true;
+  }
+
+  setHeldTorch(enabled) {
+    const next = !!enabled;
+    if (next === this.heldTorch) return;
+    this.heldTorch = next;
+    this.torch = this._timedTorch || this.heldTorch;
+    this.invalidate();
   }
 
   _prepareDrawerLayouts(game) {
@@ -1543,6 +1669,10 @@ class CanvasMuseumScene {
         if (this.collectedLibraryPapers.has(note.id)) continue;
         add(`library-paper-${note.id}`, `Collect archive word ${note.id + 1}`, note.x, note.y + .06, note.z + .02, { discoverRange: 5.4, libraryNote: true });
       }
+      for (const torch of this.torches || []) {
+        if (torch.roomIndex !== 3 || this.collectedTorches.has(torch.id)) continue;
+        add(`torch-${torch.id}`, 'Pick up torch', torch.x, torch.y + .1, torch.z, { torchPickup: true, discoverRange: 7 });
+      }
     } else {
       const roomData = game.rooms[this.roomIndex];
       const lockAlreadyOpen = this.roomIndex === 2 ? this.libraryDoorOpen : !!this.doorOpen[this.roomIndex];
@@ -1565,6 +1695,12 @@ class CanvasMuseumScene {
         const containingDrawer = paper.drawerId ? this.drawerById.get(paper.drawerId) : null;
         if (containingDrawer && !containingDrawer.open) continue;
         add(`word-paper-${paper.id}`, `Pick up word: ${paper.display}`, paper.x, paper.y + .08, paper.z + (containingDrawer?.targetOffset ?? containingDrawer?.offset ?? 0), { wordPaper: true, wordPaperIndex: paper.id, discoverRange: 7.5 });
+      }
+      for (const torch of this.torches || []) {
+        if (torch.roomIndex !== this.roomIndex || this.collectedTorches.has(torch.id)) continue;
+        const holder = torch.drawerId ? this.drawerById.get(torch.drawerId) : null;
+        if (holder && !holder.open) continue;
+        add(`torch-${torch.id}`, 'Pick up torch', torch.x, torch.y + .1, torch.z + (holder?.targetOffset ?? holder?.offset ?? 0), { torchPickup: true, discoverRange: 7 });
       }
       if (this.roomKind === 'vocab') add('key', game.rooms[0].keyObject, -2.12, 0.62, -0.68);
       else if (this.roomKind === 'reading') {
@@ -1963,6 +2099,8 @@ class CanvasMuseumScene {
     } else if (this.roomKind === 'reading') {
       this._box(0,0,-2.45,6.5,.82,1,'#56432f','#9b7747');
       for (const x of [-4.2,-1.8,1.8,4.2]) {
+        const previousTag = this._activeObjectTag;
+        this._activeObjectTag = 'gallery-fixture';
         this._roomBox(x,1.4,-5.65,1.65,1.65,.12,'#9e8155','#c0a36f');
         // Front-facing picture surface sits just in front of the frame's +Z face.
         // The renderer maps the supplied photo across this intact four-sided surface.
@@ -1972,6 +2110,7 @@ class CanvasMuseumScene {
         ], x, -5.65, '#594736', null, 'gallery-photo');
         // Small brass caption rail below each original gallery photograph.
         this._roomBox(x,1.30,-5.65,.84,.16,.10,'#574633','#b18a58');
+        this._activeObjectTag = previousTag || null;
       }
       for (const x of [-5,-2.5,0,2.5,5]) this._buildChair(x, 1.1, .64);
     } else {
@@ -2026,6 +2165,7 @@ class CanvasMuseumScene {
         ...(paper.drawerId ? { drawerId: paper.drawerId, drawerPaper: true, drawerMove: true, noVertexDedup: true } : {})
       });
     }
+    this._buildTorches(roomIndex);
     this._activeLayer = 1;
     // Seating exists in all three spaces. The pair is kept away from the doorway.
     this._buildChair(-5.05, 2.8, .72);
@@ -2040,9 +2180,11 @@ class CanvasMuseumScene {
     this._poly([[-6.8,.18,-5.94],[6.8,.18,-5.94],[6.8,.28,-5.94],[-6.8,.28,-5.94]], trim);
     this._poly([[-6.8,4.12,-5.94],[6.8,4.12,-5.94],[6.8,4.2,-5.94],[-6.8,4.2,-5.94]], trim);
     if (roomIndex === 0) {
-      // A framed clock gives the ticket hall a readable landmark; its hands
-      // are drawn on the lightweight ambient overlay rather than rebuilt geometry.
-      this._roomBox(-5.55,2.12,-5.72,.86,1.02,.16,'#49382a','#b18a55');
+      // A wall torch sconce replaces the old clock as the ticket hall landmark;
+      // its flame is animated on the lightweight ambient overlay.
+      this._roomBox(-5.55,1.95,-5.78,.30,.62,.10,'#2a2622','#6b5a42');
+      this._roomBox(-5.55,2.18,-5.62,.08,.08,.22,'#3a332c');
+      this._roomBox(-5.55,2.22,-5.50,.18,.14,.18,'#3d3128','#8a6a3e');
     } else if (roomIndex === 2) {
       // The storeroom's wall fan is an animated overlay mounted over this plate.
       this._roomBox(-5.55,2.72,-5.72,.86,.86,.16,'#343d38','#b18a55');
@@ -2622,7 +2764,7 @@ class CanvasMuseumScene {
     // out on transparent parts of the overlay is a no-op. The previous nested
     // photo × face loop repeated identical masks once per painting.
     for (const face of this._frameFaces) {
-      if (face.texture === 'gallery-photo' || face.roomIndex !== 1 || face.layer < 1) continue;
+      if (face.texture === 'gallery-photo' || face.objectTag === 'gallery-fixture' || face.roomIndex !== 1 || face.layer < 1) continue;
       const points = face._framePoints;
       if (!points || points.length < 3) continue;
       ctx.beginPath();
@@ -2695,6 +2837,7 @@ class CanvasMuseumScene {
         if (Number.isInteger(face.libraryNoteIndex) && this.collectedLibraryPapers.has(face.libraryNoteIndex)) continue;
         if (Number.isInteger(face.paperIndex) && this.collectedRoomPapers.has(face._paperKey || (face._paperKey = `${face.paperRoom}:${face.paperIndex}`))) continue;
         if (Number.isInteger(face.wordPaperIndex) && this.collectedWordPapers.has(face._wordKey || (face._wordKey = `${face.wordPaperRoom}:${face.wordPaperIndex}`))) continue;
+        if (face.torchIndex !== undefined && this.collectedTorches.has(face.torchIndex)) continue;
         if (face.drawerPaper && !this.drawerById.get(face.drawerId)?.open) continue;
         if (this._doorBarrierIsOpen(face)) continue;
         visibleFaces.push(face);
@@ -2817,11 +2960,12 @@ class CanvasMuseumScene {
         : (!libraryArea && this._physicalRoomForX(point.x) === visibleRoom);
       const worldDistance = Math.hypot(point.x-this.camera.x, point.y-this.camera.y, point.z-this.camera.z);
       if (!sameArea || worldDistance > (point.discoverRange || 8.5)) continue;
-      const screen = this._project(point.x, point.y + ((pointLibrary || point.wordPaper) ? 0.02 : .35), point.z);
+      const looseItem = point.wordPaper || point.torchPickup;
+      const screen = this._project(point.x, point.y + ((pointLibrary || looseItem) ? 0.02 : .35), point.z);
       // Shelf edges frequently intersect the projection of a note's nearby
       // interaction marker. Do not let that screen-space test flicker library
       // note markers; the paper itself is drawn in front of its own shelf.
-      if (!screen || screen.depth > 24 || (!pointLibrary && !point.wordPaper && this._isScreenPointOccluded(screen.x, screen.y, screen.depth))) continue;
+      if (!screen || screen.depth > 24 || (!pointLibrary && !looseItem && this._isScreenPointOccluded(screen.x, screen.y, screen.depth))) continue;
       const projected = this._projectedHotspotPool[projectedHotspotCount] || (this._projectedHotspotPool[projectedHotspotCount] = {});
       projected.id = point.id; projected.label = point.label; projected.x = screen.x; projected.y = screen.y;
       projected.depth = screen.depth; projected.worldDistance = worldDistance;
@@ -2829,7 +2973,7 @@ class CanvasMuseumScene {
       projectedHotspotCount++;
       // Loose word papers should be found by looking around, not by following
       // a glowing marker. Their hotspots remain active for E/tap interaction.
-      if (!point.wordPaper && !point.libraryNote) {
+      if (!looseItem && !point.libraryNote) {
         const radius = Math.max(5, Math.min(15, screen.scale * .10));
         ctx.beginPath();
         ctx.arc(screen.x, screen.y, radius + 5, 0, Math.PI * 2);
@@ -3037,8 +3181,9 @@ class CanvasMuseumScene {
 
   setTorch(enabled) {
     const next = !!enabled;
-    if (next === this.torch) return;
-    this.torch = next;
+    if (next === this._timedTorch) return;
+    this._timedTorch = next;
+    this.torch = this._timedTorch || this.heldTorch;
     this.invalidate();
   }
 

@@ -66,7 +66,7 @@ const galleryAsset = fs.readFileSync(path.join(__dirname, '..', 'assets', 'galle
 const embeddedGallery = Buffer.from(global.GALLERY_ART_DATA.split(',')[1], 'base64');
 assert.deepEqual(galleryAsset, embeddedGallery, 'standalone gallery photo must restore the exact embedded original');
 assert.equal(scene.galleryImage._src, global.GALLERY_ART_DATA, 'embedded original gallery image remains the primary texture source');
-assert.ok(scene._drawAmbientEffects && scene._drawClockEffect && scene._drawFanEffect && scene._drawGalleryGlints, 'ambient animation render paths should be available');
+assert.ok(scene._drawAmbientEffects && scene._drawSconceEffect && scene._drawHeldTorch && scene._drawFanEffect && scene._drawGalleryGlints, 'ambient animation render paths should be available');
 assert.ok(scene.canvas.width * scene.canvas.height <= scene.maxPixels * 1.01, 'main scene backing store should stay within its pixel budget');
 assert.equal(scene.roomScaleX, 1.5, 'museum rooms should use the compact 1.5x footprint scale');
 assert.equal(scene.libraryScaleX, 1.25, 'Library should retain its original scale');
@@ -362,7 +362,7 @@ const overlaySource = sceneSource.slice(sceneSource.indexOf('  _drawGalleryOverl
 assert.ok(overlaySource.includes("face.layer < 1"), 'painting overlay should use a stable foreground-only mask');
 assert.ok(!overlaySource.includes('photoDepth') && !overlaySource.includes('_polygonDepthAt'), 'painting mask must not toggle on average-depth thresholds');
 const overlaysSource = sceneSource.slice(sceneSource.indexOf('  _drawOverlays()'), sceneSource.indexOf('  _drawEquippedPaper('));
-assert.ok(overlaysSource.includes('if (!point.wordPaper && !point.libraryNote)'), 'loose papers must not show glowing hotspot markers');
+assert.ok(overlaysSource.includes('if (!looseItem && !point.libraryNote)'), 'loose papers must not show glowing hotspot markers');
 assert.ok(scene._move && scene.jump, 'movement and jumping APIs should exist');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
@@ -414,4 +414,25 @@ assert.equal(scene.jump(), true, 'jump action should start from the floor');
 assert.equal(scene.jumpVelocity, 7.2, 'jump input should set the upward impulse');
 scene.jumpVelocity = 0; scene.jumpHeight = 0;
 scene.dispose();
+// Torches: scattered across every space and hidden in drawers, equippable as light sources.
+{
+  assert.ok(scene.torches.filter(t => t.roomIndex === 0).length >= 4 && scene.torches.filter(t => t.roomIndex === 3).length >= 2, 'torches must be spread across the rooms and Library');
+  assert.ok(scene.torches.filter(t => t.drawerId).length >= 3, 'some torches must be stored inside drawers');
+  scene.setActiveRoom(game, 0);
+  const drawerTorch = scene.torches.find(t => t.drawerId && t.roomIndex === 0);
+  assert.ok(!scene.hotspots.some(h => h.id === `torch-${drawerTorch.id}`), 'a drawer torch cannot be picked up while its drawer is closed');
+  scene.toggleDrawer(drawerTorch.drawerId);
+  assert.ok(scene.hotspots.some(h => h.id === `torch-${drawerTorch.id}`), 'an opened drawer reveals its torch');
+  const floorTorch = scene.torches.find(t => !t.drawerId && t.roomIndex === 0);
+  assert.ok(scene.hotspots.some(h => h.id === `torch-${floorTorch.id}`), 'floor torches expose a pickup hotspot');
+  assert.ok(scene.collectTorch(floorTorch.id) && !scene.hotspots.some(h => h.id === `torch-${floorTorch.id}`), 'collecting removes the pickup hotspot');
+  assert.ok(scene.roomGeometry.some(f => f.torchIndex === floorTorch.id) && scene.collectedTorches.has(floorTorch.id), 'collected torch faces are culled by id');
+  scene.setHeldTorch(true); scene.setTorch(false);
+  assert.equal(scene.torch, true, 'a held torch keeps the light on when the timed torch ends');
+  scene.setHeldTorch(false);
+  assert.equal(scene.torch, false, 'putting the torch away turns the light off');
+  assert.ok(!sceneSource.includes('_drawClockEffect'), 'the clock has been replaced');
+  assert.ok(scene.roomGeometry.filter(f => f.objectTag === 'gallery-fixture').length >= 20, 'gallery frames are tagged so the picture mask ignores them');
+}
+
 console.log('PASS: 2 ESL stages × 3 difficulty tiers; four-room progression; 1.5x room footprints; Ticket Hall and Storeroom furniture/drawers; drawer-free Library shelves and loose papers; surface-aligned papers/hotspots; inactive-room vertex culling; Library connector; mobile pointerdown jump/touch capture; 20 answer panels; original FOV and movement; stable Gallery artwork; byte-identical gallery PNG; ambient overlay with clock/fan/glint effects; eased drawer motion; reduced-motion styling; strict main/ambient/Gallery pixel budgets at 1440p; local HTML/JavaScript resources.');

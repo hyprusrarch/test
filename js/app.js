@@ -139,6 +139,7 @@ function showMenu() {
   state.equippedPaperId = null;
   state.paperArea = null;
   scene?.setEquippedPaper(null);
+  scene?.setHeldTorch(false);
   state.dark = false;
   scene.setMovement(0, 0);
   scene.setPointerLockEnabled(false);
@@ -539,29 +540,50 @@ function currentPaperArea() {
   return scene?.getCurrentAreaId?.() ?? (scene?.isInLibrary?.() ? 'library' : String(scene?.roomIndex ?? 0));
 }
 
+function hotbarItems() {
+  const area = currentPaperArea();
+  return state.paperInventory.filter(item => item.kind === 'torch' || item.areaId === area);
+}
+
 function renderPaperHotbar() {
   const hotbar = $('#paper-hotbar');
   const slots = $('#paper-hotbar-slots');
   if (!hotbar || !slots) return;
   const area = currentPaperArea();
-  const inventory = state.paperInventory.filter(item => item.areaId === area);
+  const inventory = hotbarItems();
   const visible = state.mode === 'game' && inventory.length > 0;
   hotbar.hidden = !visible;
   if (!visible) { slots.innerHTML = ''; return; }
   slots.innerHTML = inventory.map((item, slotIndex) => {
     const selected = item.id === state.equippedPaperId;
-    const preview = String(item.display || item.value || item.title || '').replace(/\s+/g, ' ').slice(0, 32);
+    const preview = item.kind === 'torch' ? '🔥' : String(item.display || item.value || item.title || '').replace(/\s+/g, ' ').slice(0, 32);
     return `<button type="button" class="paper-hotbar-slot${selected ? ' selected' : ''}" data-paper-slot="${slotIndex}" data-paper-id="${escapeHtml(item.id)}" aria-pressed="${selected}" title="Equip ${escapeHtml(item.title)}"><span class="paper-slot-index">${String(slotIndex + 1).padStart(2, '0')}</span><span class="paper-slot-art">${escapeHtml(preview)}</span><strong>${escapeHtml(item.title)}</strong></button>`;
   }).join('');
 }
 
-function equipPaper(itemId) {
-  const item = state.paperInventory.find(paper => paper.id === itemId && paper.areaId === currentPaperArea());
+function equipPaper(itemId, toggle = false) {
+  const item = hotbarItems().find(paper => paper.id === itemId);
   if (!item) return false;
-  state.equippedPaperId = item.id;
-  scene?.setEquippedPaper(item);
+  if (item.kind === 'torch') {
+    const unequip = toggle && state.equippedPaperId === item.id;
+    state.equippedPaperId = unequip ? null : item.id;
+    scene?.setEquippedPaper(null);
+    scene?.setHeldTorch(!unequip);
+  } else {
+    state.equippedPaperId = item.id;
+    scene?.setHeldTorch(false);
+    scene?.setEquippedPaper(item);
+  }
   renderPaperHotbar();
   return true;
+}
+
+function collectTorch(index) {
+  const id = `torch-${index}`;
+  if (state.paperInventory.some(item => item.id === id)) return;
+  if (!scene?.collectTorch(Number(index))) return;
+  addPaperToHotbar({ id, kind: 'torch', areaId: 'all', value: 'torch', display: 'TORCH', title: 'Torch', body: '' });
+  showToast('Torch collected · it is equipped in your hotbar. Click it or press its number to put it away.', 'good');
 }
 
 function collectWordPaper(index) {
@@ -585,8 +607,8 @@ function addPaperToHotbar(item) {
 }
 
 function clearPaperHotbar() {
-  state.paperInventory = [];
-  state.equippedPaperId = null;
+  state.paperInventory = state.paperInventory.filter(item => item.kind === 'torch');
+  if (!state.paperInventory.some(item => item.id === state.equippedPaperId)) state.equippedPaperId = null;
   scene?.setEquippedPaper(null);
   renderPaperHotbar();
 }
@@ -689,6 +711,8 @@ function handleInteract(id) {
     else if (opened === false) showToast('Drawer closed. Papers inside are hidden.', '');
     return;
   }
+  const torchPickup = /^torch-(\d+)$/.exec(id || '');
+  if (torchPickup) return collectTorch(Number(torchPickup[1]));
   if (id === 'lock') return showLock();
   if (id === 'key') return showGoldenKey();
   const libraryPaper = /^library-paper-(\d+)$/.exec(id || '');
@@ -875,8 +899,8 @@ function setupKeyboard() {
     if (key === 'e' && state.focusedId) handleInteract(state.focusedId);
     if (/^[0-9]$/.test(key) && state.mode === 'game') {
       const slot = key === '0' ? 9 : Number(key) - 1;
-      const item = state.paperInventory.filter(paper => paper.areaId === currentPaperArea())[slot];
-      if (item && equipPaper(item.id)) event.preventDefault();
+      const item = hotbarItems()[slot];
+      if (item && equipPaper(item.id, true)) event.preventDefault();
     }
     if (key === ' ' && state.mode === 'game' && (!state.modal || isLiveQuestion())) { event.preventDefault(); scene.jump(); }
     if (key === 'f') activateTorch();
@@ -1093,7 +1117,7 @@ async function bootstrap() {
   jumpButton.addEventListener('contextmenu', event => event.preventDefault());
   $('#paper-hotbar').addEventListener('click', event => {
     const slot = event.target.closest('[data-paper-id]');
-    if (slot) equipPaper(slot.dataset.paperId);
+    if (slot) equipPaper(slot.dataset.paperId, true);
   });
   stageSelect.addEventListener('change', updateMenuCopy);
   tierSelect.addEventListener('change', updateMenuCopy);
